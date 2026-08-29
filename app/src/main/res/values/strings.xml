@@ -17,12 +17,18 @@
     <!-- Actions -->
     <string name="action_install">Install ReSukiSU</string>
     <string name="action_reinstall">Reinstall ReSukiSU</string>
+    <string name="action_unroot">Unroot &amp; Reboot</string>
     <string name="action_retry">Retry</string>
     <string name="action_close">Close</string>
     <string name="action_done">Done</string>
     <string name="action_soft_reboot">Soft Reboot (Userspace)</string>
     <string name="action_export_log">Export exploit.log</string>
     <string name="action_copy_log">Copy log</string>
+    <string name="action_confirm_unroot">Unroot &amp; Reboot</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="unroot_dialog_title">Remove root?</string>
+    <string name="unroot_dialog_message">This will remove all temporary exploit files, delete KernelSU data (/data/adb), and reboot your device to fully restore stock kernel state.</string>
+    <string name="status_unrooting">Cleaning up and rebooting…</string>
     <string name="copied_to_clipboard">Log copied to clipboard</string>
 
     <!-- Install screen -->

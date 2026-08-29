@@ -27,12 +27,18 @@
     <!-- Actions -->
     <string name="action_install">ReSukiSU をインストール</string>
     <string name="action_reinstall">ReSukiSU を再インストール</string>
+    <string name="action_unroot">root 権限を削除して再起動</string>
     <string name="action_retry">再試行</string>
     <string name="action_close">閉じる</string>
     <string name="action_done">完了</string>
     <string name="action_soft_reboot">ソフト再起動（ユーザー空間）</string>
     <string name="action_export_log">exploit.log を書き出す</string>
     <string name="action_copy_log">ログをコピー</string>
+    <string name="action_confirm_unroot">削除して再起動</string>
+    <string name="action_cancel">キャンセル</string>
+    <string name="unroot_dialog_title">root 権限を削除しますか？</string>
+    <string name="unroot_dialog_message">一時 exploit ファイル、KernelSU のデータ (/data/adb) を削除し、端末を再起動して純正カーネル状態に戻します。</string>
+    <string name="status_unrooting">クリーンアップと再起動中…</string>
     <string name="copied_to_clipboard">ログをクリップボードにコピーしました</string>
 
     <!-- Install screen -->

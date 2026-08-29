@@ -17,12 +17,18 @@
     <!-- Actions -->
     <string name="action_install">安裝 ReSukiSU</string>
     <string name="action_reinstall">重新安裝 ReSukiSU</string>
+    <string name="action_unroot">清除 Root 並重開機</string>
     <string name="action_retry">重試</string>
     <string name="action_close">關閉</string>
     <string name="action_done">完成</string>
     <string name="action_soft_reboot">軟重啟 (Userspace)</string>
     <string name="action_export_log">匯出 exploit.log</string>
     <string name="action_copy_log">複製日誌</string>
+    <string name="action_confirm_unroot">清除並重開機</string>
+    <string name="action_cancel">取消</string>
+    <string name="unroot_dialog_title">確定要清除 Root 嗎？</string>
+    <string name="unroot_dialog_message">這將會刪除所有臨時漏洞利用檔案、KernelSU 資料 (/data/adb)，並重新啟動裝置以完全恢復原生核心狀態。</string>
+    <string name="status_unrooting">正在清理並重開機…</string>
     <string name="copied_to_clipboard">日誌已複製到剪貼簿</string>
 
     <!-- Install screen -->

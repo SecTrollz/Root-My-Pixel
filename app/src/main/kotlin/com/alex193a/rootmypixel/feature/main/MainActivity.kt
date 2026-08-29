@@ -25,13 +25,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.OpenInBrowser
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,6 +50,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -88,6 +94,7 @@ class MainActivity : ComponentActivity() {
                     uptimeExceeded = uptimeExceeded,
                     onRefresh = { installViewModel.refresh() },
                     onInstall = { installViewModel.install() },
+                    onUnroot = { installViewModel.unrootAndReboot() },
                     onExportLog = { installViewModel.exportLog() },
                 )
             }
@@ -109,12 +116,52 @@ private fun MainScreen(
     uptimeExceeded: Boolean,
     onRefresh: () -> Unit,
     onInstall: () -> Unit,
+    onUnroot: () -> Unit,
     onExportLog: () -> Unit,
 ) {
     val context = LocalContext.current
+    var showUnrootDialog by remember { mutableStateOf(false) }
 
     @Suppress("DEPRECATION")
     val clipboardManager = LocalClipboardManager.current
+
+    if (showUnrootDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnrootDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.DeleteForever,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            },
+            title = {
+                Text(text = stringResource(R.string.unroot_dialog_title))
+            },
+            text = {
+                Text(text = stringResource(R.string.unroot_dialog_message))
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showUnrootDialog = false
+                        onUnroot()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) {
+                    Text(text = stringResource(R.string.action_confirm_unroot))
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showUnrootDialog = false }) {
+                    Text(text = stringResource(R.string.action_cancel))
+                }
+            },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -233,21 +280,35 @@ private fun MainScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Install button
-            Button(
-                onClick = onInstall,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                enabled = state.phase == InstallPhase.Ready || state.phase == InstallPhase.Installed,
-            ) {
-                Icon(Icons.Rounded.Bolt, contentDescription = null)
-                Text(
-                    text = stringResource(
-                        if (state.phase == InstallPhase.Installed) R.string.action_reinstall
-                        else R.string.action_install
+            // Action button: Unroot & Reboot when installed, Install when ready
+            if (state.phase == InstallPhase.Installed) {
+                Button(
+                    onClick = { showUnrootDialog = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    enabled = !state.busy,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
                     ),
-                )
+                ) {
+                    Icon(Icons.Rounded.DeleteForever, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(R.string.action_unroot))
+                }
+            } else {
+                Button(
+                    onClick = onInstall,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    enabled = state.phase == InstallPhase.Ready,
+                ) {
+                    Icon(Icons.Rounded.Bolt, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = stringResource(R.string.action_install))
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))

@@ -15,12 +15,18 @@
     <!-- Actions -->
     <string name="action_install">Installa ReSukiSU</string>
     <string name="action_reinstall">Reinstalla ReSukiSU</string>
+    <string name="action_unroot">Rimuovi Root e Riavvia</string>
     <string name="action_retry">Riprova</string>
     <string name="action_close">Chiudi</string>
     <string name="action_done">Fatto</string>
     <string name="action_soft_reboot">Soft Reboot (Userspace)</string>
     <string name="action_export_log">Esporta exploit.log</string>
     <string name="action_copy_log">Copia log</string>
+    <string name="action_confirm_unroot">Rimuovi e Riavvia</string>
+    <string name="action_cancel">Annulla</string>
+    <string name="unroot_dialog_title">Rimuovere i permessi di root?</string>
+    <string name="unroot_dialog_message">Questa azione eliminerà tutti i file temporanei dell\'exploit, le configurazioni di KernelSU (/data/adb) e riavvierà il dispositivo per ripristinare completamente lo stato stock.</string>
+    <string name="status_unrooting">Rimozione root e riavvio in corso…</string>
     <string name="copied_to_clipboard">Log copiato negli appunti</string>
 
     <!-- Install screen -->
