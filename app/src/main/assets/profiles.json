@@ -151,6 +151,14 @@
       "buildDisplay": "CP2A.260705.006",
       "exploitAsset": "exploits/komodo-CP2A.260705.006.so",
       "kmi": "android14-6.1"
+    },
+    {
+      "profileId": "stallion-CP2A.260805.005",
+      "codename": "stallion",
+      "kernelRelease": "6.1.157-android14-11",
+      "buildDisplay": "CP2A.260805.005",
+      "exploitAsset": "exploits/stallion-CP2A.260805.005.so",
+      "kmi": "android14-6.1"
     }
   ]
 }
