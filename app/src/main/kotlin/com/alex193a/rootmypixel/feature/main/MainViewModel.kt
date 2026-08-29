@@ -116,7 +116,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 mutableReSukiSuInstalled.value = app.packageManager
                     .getLaunchIntentForPackage("com.resukisu.resukisu") != null
                 val probe = NativeProbe.run()
-                if (NativeProbe.isKernelSuActive()) {
+                if (NativeProbe.isKernelSuActive(app)) {
                     mutableState.value = InstallUiState(
                         phase = InstallPhase.Installed,
                         message = app.getString(R.string.status_ksu_active),

@@ -20,9 +20,9 @@ import com.alex193a.rootmypixel.domain.usecase.ResolveTargetUseCase
 import com.alex193a.rootmypixel.shizuku.ExploitService
 import com.alex193a.rootmypixel.shizuku.IExploitService
 import com.alex193a.rootmypixel.utils.NativeProbe
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -67,7 +67,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             try {
                 val probe = NativeProbe.run()
                 val deviceInfo = NativeProbe.readDeviceSnapshot()
-                if (NativeProbe.isKernelSuActive()) {
+                if (NativeProbe.isKernelSuActive(app)) {
                     mutableState.value = InstallUiState(
                         phase = InstallPhase.Installed,
                         message = app.getString(R.string.status_ksu_active),

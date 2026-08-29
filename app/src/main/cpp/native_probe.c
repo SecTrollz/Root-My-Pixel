@@ -1,15 +1,46 @@
 #include <jni.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <sys/system_properties.h>
 #include <sys/utsname.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
 #include <fcntl.h>
 #include <android/log.h>
 
 #define TAG "PixelNativeProbe"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
+
+#define KSU_MAGIC_1 0xDEADBEEF
+#define KSU_MAGIC_2 0xCAFEBABE
+
+static int check_kernelsu_active(void) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        return 0;
+    }
+    if (pid == 0) {
+        // Child process: isolated from parent.
+        // If KernelSU is not present, SECCOMP will trigger SIGSYS and only this child process will terminate.
+        int fd = -1;
+        if (syscall(SYS_reboot, KSU_MAGIC_1, KSU_MAGIC_2, 0, &fd) == 0 && fd >= 0) {
+            close(fd);
+            _exit(0);
+        }
+        _exit(1);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) == pid) {
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
 
 static int read_file(const char *path, char *buf, size_t size) {
     int fd = open(path, O_RDONLY);
@@ -27,6 +58,12 @@ static void get_prop(const char *key, char *buf, size_t size) {
     if (len <= 0 || buf[0] == '\0') {
         snprintf(buf, size, "unknown");
     }
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_alex193a_rootmypixel_utils_NativeProbe_isKernelSuActiveNative(
+        JNIEnv *env __attribute__((unused)), jobject thiz __attribute__((unused))) {
+    return check_kernelsu_active() ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jstring JNICALL
@@ -78,14 +115,9 @@ Java_com_alex193a_rootmypixel_utils_NativeProbe_run(
                     getpid(), getuid());
 
     // Check for KernelSU
-    struct stat st;
-    if (stat("/data/adb/ksu", &st) == 0) {
+    if (check_kernelsu_active()) {
         off += snprintf(output + off, sizeof(output) - off,
-                        "ksu_dir: present\n");
-    }
-    if (stat("/data/adb/ksud", &st) == 0) {
-        off += snprintf(output + off, sizeof(output) - off,
-                        "ksud: present\n");
+                "kernelsu: active\n");
     }
 
     return (*env)->NewStringUTF(env, output);
