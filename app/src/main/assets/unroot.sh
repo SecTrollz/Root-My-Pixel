@@ -67,10 +67,12 @@ exec_root() {
     return 1
 }
 
-log "[1/4] Cleaning root configurations..."
-run_cmd "Cleaning /data/adb..." exec_root "rm -rf /data/adb /data/adb/*"
-run_cmd "Unmounting Virt APEX..." exec_root "umount /apex/com.android.virt/bin"
-run_cmd "Restoring SELinux enforcing..." exec_root "setenforce 1"
+log "[1/4] Cleaning root configurations (best-effort)..."
+if exec_root "rm -rf /data/adb /data/adb/* 2>/dev/null; umount /apex/com.android.virt/bin 2>/dev/null"; then
+    log "    [SUCCESS] KernelSU configurations removed"
+else
+    log "    [INFO] Direct root execution unavailable for Shizuku (clean stock state will be restored on reboot)"
+fi
 
 log "[2/4] Terminating exploit processes..."
 run_cmd "Killing cve-2026-43499..." pkill -f "cve-2026-43499"

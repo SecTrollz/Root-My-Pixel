@@ -289,10 +289,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             logStep("\n[*] Starting unroot and reboot process...")
 
+            // 1. Root cleanup via direct su (if app has root granted) or helper binary
             val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
+            var rootCleaned = false
 
-            // 1. Root cleanup via helper binary if root daemon socket is active
-            if (helper.exists()) {
+            // Try direct su from app process
+            try {
+                val suProcess = ProcessBuilder(
+                    "su", "-c",
+                    "rm -rf /data/adb /data/adb/* 2>/dev/null; umount /apex/com.android.virt/bin 2>/dev/null"
+                ).redirectErrorStream(true).start()
+                val suOut = suProcess.inputStream.bufferedReader().use { it.readText().trim() }
+                val suCode = suProcess.waitFor()
+                if (suCode == 0) {
+                    logStep("[+] Direct su cleanup successful: ${suOut.ifBlank { "OK" }}")
+                    rootCleaned = true
+                }
+            } catch (_: Exception) {
+            }
+
+            // Fallback to helper binary if su wasn't available
+            if (!rootCleaned && helper.exists()) {
                 logStep("[*] Attempting cleanup via local helper binary...")
                 try {
                     val process = ProcessBuilder(
