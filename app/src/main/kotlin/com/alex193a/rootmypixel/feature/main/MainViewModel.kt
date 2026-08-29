@@ -276,22 +276,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun unrootAndReboot() {
         viewModelScope.launch(Dispatchers.IO) {
-            mutableState.value = mutableState.value.copy(
-                phase = InstallPhase.Checking,
-                message = app.getString(R.string.status_unrooting),
-            )
+            val logBuilder = StringBuilder(mutableState.value.log)
+            fun logStep(msg: String) {
+                android.util.Log.i("RootMyPixel", "[unrootAndReboot] $msg")
+                logBuilder.appendLine(msg)
+                mutableState.value = mutableState.value.copy(
+                    phase = InstallPhase.Checking,
+                    message = app.getString(R.string.status_unrooting),
+                    log = logBuilder.toString(),
+                )
+            }
+
+            logStep("\n[*] Starting unroot and reboot process...")
 
             val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
 
             // 1. Root cleanup via helper binary if root daemon socket is active
             if (helper.exists()) {
+                logStep("[*] Attempting cleanup via local helper binary...")
                 try {
                     val process = ProcessBuilder(
                         helper.absolutePath, "-c",
                         "rm -rf /data/adb /data/adb/* 2>/dev/null; umount /apex/com.android.virt/bin 2>/dev/null; setenforce 1 2>/dev/null"
                     ).redirectErrorStream(true).start()
-                    process.waitFor()
-                } catch (_: Exception) {
+                    val out = process.inputStream.bufferedReader().use { it.readText().trim() }
+                    val code = process.waitFor()
+                    logStep("[+] Helper cleanup exit=$code output=${out.ifBlank { "OK" }}")
+                } catch (e: Exception) {
+                    logStep("[-] Helper cleanup error: ${e.message}")
                 }
             }
 
@@ -306,6 +318,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (shizukuActive) {
+                logStep("[*] Binding Shizuku UserService...")
                 val handle = bindExploitService()
                 if (handle != null) {
                     try {
@@ -314,13 +327,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }.getOrDefault("")
 
                         if (unrootScript.isNotBlank()) {
-                            handle.service.exec(unrootScript)
+                            logStep("[*] Executing unroot.sh via Shizuku...")
+                            val scriptOutput = handle.service.exec(unrootScript)
+                            logStep("[+] unroot.sh output:\n$scriptOutput")
+                        } else {
+                            logStep("[-] unroot.sh asset is missing or empty")
                         }
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                        logStep("[-] Shizuku unroot execution error: ${e.message}")
                     } finally {
                         unbindExploitService(handle)
                     }
+                } else {
+                    logStep("[-] Failed to bind Shizuku UserService")
                 }
+            } else {
+                logStep("[!] Shizuku is not active or permission not granted")
             }
 
             // 3. Direct cleanup of tmp files if accessible
@@ -333,12 +355,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             // 4. Fallback reboot via helper
             if (helper.exists()) {
+                logStep("[*] Triggering fallback reboot via helper...")
                 try {
-                    ProcessBuilder(
+                    val p = ProcessBuilder(
                         helper.absolutePath, "-c",
                         "pkill -f su_daemon; svc power reboot || reboot"
-                    ).redirectErrorStream(true).start().waitFor()
-                } catch (_: Exception) {
+                    ).redirectErrorStream(true).start()
+                    p.waitFor()
+                } catch (e: Exception) {
+                    logStep("[-] Fallback reboot error: ${e.message}")
                 }
             }
 
