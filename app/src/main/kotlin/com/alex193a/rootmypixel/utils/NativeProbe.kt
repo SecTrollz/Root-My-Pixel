@@ -17,17 +17,13 @@ object NativeProbe {
     external fun run(): String
 
     /**
-     * Check if KernelSU/ReSukiSU is active via kernel driver syscall (AVC-safe).
-     */
-    external fun isKernelSuActiveNative(): Boolean
-
-    /**
      * Check if ReSukiSU is currently active on the device.
      */
     fun isKernelSuActive(): Boolean {
-        return isKernelSuActiveNative() ||
-                File("/dev/kernelsu").exists() ||
-                File("/sys/kernel/kernelsu").exists()
+        return File("/dev/kernelsu").exists() ||
+            File("/sys/kernel/kernelsu").exists() ||
+            File("/data/adb/ksu").exists() ||
+            File("/data/adb/ksu/bin/ksu").exists()
     }
 
     /**
