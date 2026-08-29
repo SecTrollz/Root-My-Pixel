@@ -31,15 +31,46 @@ run_cmd() {
     return $status
 }
 
-log "[1/4] Checking temporary root daemon..."
-if [ -e "/data/local/tmp/temp_su.sock" ] || [ -x "/data/local/tmp/su" ]; then
-    log "Root daemon found."
-    run_cmd "Cleaning /data/adb..." /data/local/tmp/su -c "rm -rf /data/adb /data/adb/*"
-    run_cmd "Unmounting Virt APEX..." /data/local/tmp/su -c "umount /apex/com.android.virt/bin"
-    run_cmd "Restoring SELinux enforcing..." /data/local/tmp/su -c "setenforce 1"
-else
-    log "Root daemon socket not active, skipping daemon cleanup."
-fi
+exec_root() {
+    local cmd="$1"
+    # 1. Try system su in PATH (KernelSU)
+    if command -v su >/dev/null 2>&1; then
+        local out
+        out=$(su -c "$cmd" 2>&1)
+        if [ $? -eq 0 ]; then
+            [ -n "$out" ] && echo "$out"
+            return 0
+        fi
+    fi
+
+    # 2. Try standard /system/bin/su
+    if [ -x "/system/bin/su" ]; then
+        local out
+        out=$(/system/bin/su -c "$cmd" 2>&1)
+        if [ $? -eq 0 ]; then
+            [ -n "$out" ] && echo "$out"
+            return 0
+        fi
+    fi
+
+    # 3. Try local exploit daemon su binary
+    if [ -x "/data/local/tmp/su" ] && [ -e "/data/local/tmp/temp_su.sock" ]; then
+        local out
+        out=$(/data/local/tmp/su -c "$cmd" 2>&1)
+        if [ $? -eq 0 ]; then
+            [ -n "$out" ] && echo "$out"
+            return 0
+        fi
+    fi
+
+    echo "root execution unavailable (SELinux enforcing or daemon offline)"
+    return 1
+}
+
+log "[1/4] Cleaning root configurations..."
+run_cmd "Cleaning /data/adb..." exec_root "rm -rf /data/adb /data/adb/*"
+run_cmd "Unmounting Virt APEX..." exec_root "umount /apex/com.android.virt/bin"
+run_cmd "Restoring SELinux enforcing..." exec_root "setenforce 1"
 
 log "[2/4] Terminating exploit processes..."
 run_cmd "Killing cve-2026-43499..." pkill -f "cve-2026-43499"
