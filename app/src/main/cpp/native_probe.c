@@ -5,6 +5,7 @@
 #include <sys/system_properties.h>
 #include <sys/utsname.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <fcntl.h>
 #include <android/log.h>
 
@@ -27,6 +28,17 @@ static void get_prop(const char *key, char *buf, size_t size) {
     if (len <= 0 || buf[0] == '\0') {
         snprintf(buf, size, "unknown");
     }
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_alex193a_rootmypixel_utils_NativeProbe_isKernelSuActiveNative(
+        JNIEnv *env, jobject thiz __attribute__((unused))) {
+    int fd = -1;
+    if (syscall(SYS_reboot, 0xDEADBEEF, 0xCAFEBABE, 0, &fd) == 0 && fd >= 0) {
+        close(fd);
+        return JNI_TRUE;
+    }
+    return JNI_FALSE;
 }
 
 JNIEXPORT jstring JNICALL
@@ -77,15 +89,12 @@ Java_com_alex193a_rootmypixel_utils_NativeProbe_run(
                     model, device, build, sdk, abi, fingerprint,
                     getpid(), getuid());
 
-    // Check for KernelSU
-    struct stat st;
-    if (stat("/data/adb/ksu", &st) == 0) {
+    // Check for KernelSU via kernel driver syscall (AVC-safe, no filesystem stat)
+    int ksu_fd = -1;
+    if (syscall(SYS_reboot, 0xDEADBEEF, 0xCAFEBABE, 0, &ksu_fd) == 0 && ksu_fd >= 0) {
+        close(ksu_fd);
         off += snprintf(output + off, sizeof(output) - off,
-                        "ksu_dir: present\n");
-    }
-    if (stat("/data/adb/ksud", &st) == 0) {
-        off += snprintf(output + off, sizeof(output) - off,
-                        "ksud: present\n");
+                "kernelsu: active\n");
     }
 
     return (*env)->NewStringUTF(env, output);
