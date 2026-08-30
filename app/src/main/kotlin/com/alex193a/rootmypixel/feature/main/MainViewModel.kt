@@ -289,15 +289,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             logStep("\n[*] Starting unroot and reboot process...")
 
-            // 1. Root cleanup via direct su (if app has root granted) or helper binary
+            // 1. Root cleanup through the app's own UID. A ReSukiSU Manager grant
+            // applies to this UID, not to the Shizuku UserService (UID shell).
             val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
             var rootCleaned = false
+            val rootCleanup = ROOT_CLEANUP_COMMAND
 
             // Try direct su from app process
             try {
                 val suProcess = ProcessBuilder(
                     "su", "-c",
-                    "rm -rf /data/adb /data/adb/* 2>/dev/null; umount /apex/com.android.virt/bin 2>/dev/null"
+                    rootCleanup
                 ).redirectErrorStream(true).start()
                 val suOut = suProcess.inputStream.bufferedReader().use { it.readText().trim() }
                 val suCode = suProcess.waitFor()
@@ -314,11 +316,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     val process = ProcessBuilder(
                         helper.absolutePath, "-c",
-                        "rm -rf /data/adb /data/adb/* 2>/dev/null; umount /apex/com.android.virt/bin 2>/dev/null; setenforce 1 2>/dev/null"
+                        rootCleanup
                     ).redirectErrorStream(true).start()
                     val out = process.inputStream.bufferedReader().use { it.readText().trim() }
                     val code = process.waitFor()
-                    logStep("[+] Helper cleanup exit=$code output=${out.ifBlank { "OK" }}")
+                    if (code == 0) {
+                        rootCleaned = true
+                        logStep("[+] Helper cleanup successful: ${out.ifBlank { "OK" }}")
+                    } else {
+                        logStep("[-] Helper cleanup failed (exit=$code): ${out.ifBlank { "no output" }}")
+                    }
                 } catch (e: Exception) {
                     logStep("[-] Helper cleanup error: ${e.message}")
                 }
@@ -334,6 +341,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 false
             }
 
+            var rebootRequested = false
             if (shizukuActive) {
                 logStep("[*] Binding Shizuku UserService...")
                 val handle = bindExploitService()
@@ -347,6 +355,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             logStep("[*] Executing unroot.sh via Shizuku...")
                             val scriptOutput = handle.service.exec(unrootScript)
                             logStep("[+] unroot.sh output:\n$scriptOutput")
+                            rebootRequested = scriptOutput.contains("Reboot requested")
                         } else {
                             logStep("[-] unroot.sh asset is missing or empty")
                         }
@@ -362,7 +371,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 logStep("[!] Shizuku is not active or permission not granted")
             }
 
-            // 3. Direct cleanup of tmp files if accessible
+            // 3. Direct cleanup of tmp files if accessible.
             try {
                 File("/data/local/tmp/temp_su.sock").delete()
                 File("/data/local/tmp/su_daemon.log").delete()
@@ -370,17 +379,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (_: Exception) {
             }
 
-            // 4. Fallback reboot via helper
-            if (helper.exists()) {
-                logStep("[*] Triggering fallback reboot via helper...")
+            // 4. If Shizuku was unavailable or did not submit a reboot request,
+            // use the same transport that performed privileged cleanup. This
+            // covers both a Manager grant for the app and the local CVE daemon.
+            if (!rebootRequested) {
+                val rebootCommand =
+                    "$ROOT_CLEANUP_COMMAND; $TMP_CLEANUP_COMMAND; sync; svc power reboot || reboot"
+                logStep("[*] Triggering privileged fallback reboot...")
                 try {
                     val p = ProcessBuilder(
-                        helper.absolutePath, "-c",
-                        "pkill -f su_daemon; svc power reboot || reboot"
+                        "su", "-c", rebootCommand
                     ).redirectErrorStream(true).start()
-                    p.waitFor()
+                    val out = p.inputStream.bufferedReader().use { it.readText().trim() }
+                    val code = p.waitFor()
+                    rebootRequested = code == 0
+                    logStep("[*] Direct su reboot exit=$code ${out.ifBlank { "OK" }}")
                 } catch (e: Exception) {
-                    logStep("[-] Fallback reboot error: ${e.message}")
+                    logStep("[-] Direct su reboot error: ${e.message}")
+                }
+
+                if (!rebootRequested && helper.exists()) {
+                    try {
+                        val p = ProcessBuilder(
+                            helper.absolutePath, "-c", rebootCommand
+                        ).redirectErrorStream(true).start()
+                        val out = p.inputStream.bufferedReader().use { it.readText().trim() }
+                        val code = p.waitFor()
+                        logStep("[*] CVE fallback reboot exit=$code ${out.ifBlank { "OK" }}")
+                    } catch (e: Exception) {
+                        logStep("[-] CVE fallback reboot error: ${e.message}")
+                    }
                 }
             }
 
@@ -392,5 +420,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val SHIZUKU_PERMISSION_CODE = 101
         private const val UPTIME_THRESHOLD_MS = 5 * 60 * 1000L // 5 minutes
+        private const val ROOT_CLEANUP_COMMAND =
+            "rm -rf /data/adb || exit 1; " +
+                    "umount /apex/com.android.virt/bin 2>/dev/null || true; " +
+                    "setenforce 1 2>/dev/null || true"
+        private const val TMP_CLEANUP_COMMAND =
+            "rm -f /data/local/tmp/cve-2026-43499-app.so " +
+                    "/data/local/tmp/cve-2026-43499-root " +
+                    "/data/local/tmp/ksud-pixel /data/local/tmp/su " +
+                    "/data/local/tmp/.su.new.* /data/local/tmp/temp_su.sock " +
+                    "/data/local/tmp/exploit.log /data/local/tmp/su_daemon.log"
     }
 }
