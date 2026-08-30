@@ -115,13 +115,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 mutableReSukiSuInstalled.value = app.packageManager
                     .getLaunchIntentForPackage("com.resukisu.resukisu") != null
+                val kernelSuStatus = NativeProbe.kernelSuStatus()
                 val probe = NativeProbe.run()
-                if (NativeProbe.isKernelSuActive(app)) {
+                if (kernelSuStatus.isActive) {
                     mutableState.value = InstallUiState(
                         phase = InstallPhase.Installed,
                         message = app.getString(R.string.status_ksu_active),
                         probeOutput = probe,
-                        log = probe,
+                        log = "$probe\nKernelSU UAPI root-profile grant for this app: " +
+                                "${kernelSuStatus.appRootGranted}",
                     )
                     return@launch
                 }

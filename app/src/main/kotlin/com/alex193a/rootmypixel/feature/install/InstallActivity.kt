@@ -26,10 +26,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Error
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,12 +41,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -86,6 +93,7 @@ class InstallActivity : ComponentActivity() {
                         permissiveOnly = permissiveOnly,
                         onRetry = { installViewModel.install(profileId, permissiveOnly) },
                         onSoftReboot = { installViewModel.softReboot() },
+                        onUnroot = installViewModel::unrootCurrentSession,
                         onClose = { finish() },
                         modifier = Modifier.padding(padding),
                     )
@@ -129,11 +137,47 @@ private fun InstallScreen(
     permissiveOnly: Boolean,
     onRetry: () -> Unit,
     onSoftReboot: () -> Unit,
+    onUnroot: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val logScrollState = rememberScrollState()
     val steps = if (permissiveOnly) installerStepsPermissive else installerStepsFull
+    var showUnrootDialog by remember { mutableStateOf(false) }
+
+    if (showUnrootDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnrootDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.DeleteForever,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            },
+            title = { Text(stringResource(R.string.unroot_dialog_title)) },
+            text = { Text(stringResource(R.string.unroot_dialog_message)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showUnrootDialog = false
+                        onUnroot()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) {
+                    Text(stringResource(R.string.action_confirm_unroot))
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showUnrootDialog = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
+        )
+    }
 
     LaunchedEffect(installState.log) {
         delay(40.milliseconds)
@@ -203,21 +247,31 @@ private fun InstallScreen(
                     }
 
                     installState.phase == InstallPhase.Installed -> {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Button(
                                 onClick = onClose,
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Text(stringResource(R.string.action_done))
                             }
-                            /* TODO: re-add later
-                            Button(
-                                onClick = onSoftReboot,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(stringResource(R.string.action_soft_reboot))
+                            if (installState.canUnrootCurrentSession) {
+                                Button(
+                                    onClick = { showUnrootDialog = true },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error,
+                                        contentColor = MaterialTheme.colorScheme.onError,
+                                    ),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.DeleteForever,
+                                        contentDescription = null,
+                                    )
+                                    Text(stringResource(R.string.action_unroot))
+                                }
                             }
-                            */
                         }
                     }
                 }

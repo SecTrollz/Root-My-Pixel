@@ -7,39 +7,105 @@
 #include <sys/utsname.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <android/log.h>
+#include <stdint.h>
 
 #define TAG "PixelNativeProbe"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 
 #define KSU_MAGIC_1 0xDEADBEEF
 #define KSU_MAGIC_2 0xCAFEBABE
+#define KSU_IOCTL_GET_INFO _IOR('K', 2, struct ksu_get_info_cmd)
+#define KSU_IOCTL_GET_INFO_LEGACY _IOC(_IOC_READ, 'K', 2, 0)
+// This legacy UAPI command deliberately encodes a zero-sized payload.  Using
+// _IOWR would encode sizeof(struct ksu_uid_granted_root_cmd) in the command
+// number, making the kernel reject it as a different ioctl.
+#define KSU_IOCTL_UID_GRANTED_ROOT _IOC(_IOC_READ | _IOC_WRITE, 'K', 8, 0)
 
-static int check_kernelsu_active(void) {
+struct ksu_get_info_cmd {
+    uint32_t version;
+    uint32_t flags;
+    uint32_t features;
+    uint32_t uapi_version;
+};
+
+struct ksu_uid_granted_root_cmd {
+    uint32_t uid;
+    uint8_t granted;
+};
+
+struct ksu_probe_result {
+    uint8_t driver_present;
+    uint8_t driver_responsive;
+    uint8_t app_root_granted;
+    uint32_t version;
+    uint32_t flags;
+    uint32_t features;
+    uint32_t uapi_version;
+};
+
+static int get_kernelsu_info(struct ksu_probe_result *result) {
+    int pipe_fds[2];
+    memset(result, 0, sizeof(*result));
+    if (pipe(pipe_fds) != 0) {
+        return 0;
+    }
+
     pid_t pid = fork();
     if (pid < 0) {
+        close(pipe_fds[0]);
+        close(pipe_fds[1]);
         return 0;
     }
     if (pid == 0) {
-        // Child process: isolated from parent.
-        // If KernelSU is not present, SECCOMP will trigger SIGSYS and only this child process will terminate.
+        // A stock kernel can reject the supercall with SIGSYS. Keep that
+        // failure isolated so probing never terminates the Android app.
+        close(pipe_fds[0]);
+        struct ksu_probe_result child_result;
+        memset(&child_result, 0, sizeof(child_result));
         int fd = -1;
         if (syscall(SYS_reboot, KSU_MAGIC_1, KSU_MAGIC_2, 0, &fd) == 0 && fd >= 0) {
+            child_result.driver_present = 1;
+            struct ksu_get_info_cmd info;
+            memset(&info, 0, sizeof(info));
+            if (ioctl(fd, KSU_IOCTL_GET_INFO, &info) == 0 ||
+                    ioctl(fd, KSU_IOCTL_GET_INFO_LEGACY, &info) == 0) {
+                child_result.driver_responsive = info.version > 0;
+                child_result.version = info.version;
+                child_result.flags = info.flags;
+                child_result.features = info.features;
+                child_result.uapi_version = info.uapi_version;
+                if (child_result.driver_responsive) {
+                    struct ksu_uid_granted_root_cmd root_command;
+                    memset(&root_command, 0, sizeof(root_command));
+                    root_command.uid = (uint32_t) getuid();
+                    if (ioctl(fd, KSU_IOCTL_UID_GRANTED_ROOT, &root_command) == 0) {
+                        child_result.app_root_granted = root_command.granted != 0;
+                    }
+                }
+            }
             close(fd);
-            _exit(0);
         }
-        _exit(1);
+        (void) write(pipe_fds[1], &child_result, sizeof(child_result));
+        close(pipe_fds[1]);
+        _exit(0);
     }
 
+    close(pipe_fds[1]);
+    ssize_t bytes_read = read(pipe_fds[0], result, sizeof(*result));
+    close(pipe_fds[0]);
     int status = 0;
-    if (waitpid(pid, &status, 0) == pid) {
-        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-            return 1;
-        }
-    }
-    return 0;
+    return waitpid(pid, &status, 0) == pid &&
+            WIFEXITED(status) && WEXITSTATUS(status) == 0 &&
+            bytes_read == (ssize_t) sizeof(*result);
+}
+
+static int check_kernelsu_active(void) {
+    struct ksu_probe_result result;
+    return get_kernelsu_info(&result) && result.driver_responsive;
 }
 
 static int read_file(const char *path, char *buf, size_t size) {
@@ -64,6 +130,19 @@ JNIEXPORT jboolean JNICALL
 Java_com_alex193a_rootmypixel_utils_NativeProbe_isKernelSuActiveNative(
         JNIEnv *env __attribute__((unused)), jobject thiz __attribute__((unused))) {
     return check_kernelsu_active() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_alex193a_rootmypixel_utils_NativeProbe_getKernelSuInfoNative(
+        JNIEnv *env, jobject thiz __attribute__((unused))) {
+    struct ksu_probe_result result;
+    int probe_ok = get_kernelsu_info(&result);
+    char output[192];
+    snprintf(output, sizeof(output),
+            "probe=%d;present=%d;responsive=%d;granted=%d;version=%u;flags=%u;features=%u;uapi=%u",
+            probe_ok, result.driver_present, result.driver_responsive, result.app_root_granted,
+            result.version, result.flags, result.features, result.uapi_version);
+    return (*env)->NewStringUTF(env, output);
 }
 
 JNIEXPORT jstring JNICALL
@@ -114,10 +193,11 @@ Java_com_alex193a_rootmypixel_utils_NativeProbe_run(
                     model, device, build, sdk, abi, fingerprint,
                     getpid(), getuid());
 
-    // Check for KernelSU
-    if (check_kernelsu_active()) {
+    struct ksu_probe_result ksu_result;
+    if (get_kernelsu_info(&ksu_result) && ksu_result.driver_responsive) {
         off += snprintf(output + off, sizeof(output) - off,
-                "kernelsu: active\n");
+                "kernelsu: active version=%u flags=0x%x uapi=%u\n",
+                ksu_result.version, ksu_result.flags, ksu_result.uapi_version);
     }
 
     return (*env)->NewStringUTF(env, output);

@@ -86,4 +86,3 @@
     <string name="uptime_error_title">Phone not rebooted</string>
     <string name="uptime_error_message">The phone hasn\'t been rebooted recently. Rebooting your device before installation is recommended to ensure exploit stability.</string>
 </resources>
-

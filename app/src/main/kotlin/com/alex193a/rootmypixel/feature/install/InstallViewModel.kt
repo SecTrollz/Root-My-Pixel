@@ -67,7 +67,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             try {
                 val probe = NativeProbe.run()
                 val deviceInfo = NativeProbe.readDeviceSnapshot()
-                if (NativeProbe.isKernelSuActive(app)) {
+                if (NativeProbe.isKernelSuActive()) {
                     mutableState.value = InstallUiState(
                         phase = InstallPhase.Installed,
                         message = app.getString(R.string.status_ksu_active),
@@ -189,6 +189,17 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
 
                     setPhase(InstallPhase.Installed, app.getString(R.string.status_ksu_active))
                     appendLog(app.getString(R.string.log_install_complete))
+                    val cveRootAvailable = hasCveRootTransport()
+                    mutableState.value = mutableState.value.copy(
+                        canUnrootCurrentSession = cveRootAvailable,
+                    )
+                    appendLog(
+                        if (cveRootAvailable) {
+                            "[+] Current-session CVE root transport verified; Unroot is available"
+                        } else {
+                            "[!] Current-session CVE root transport is unavailable; use the main Unroot flow"
+                        },
+                    )
                 }
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
@@ -417,6 +428,57 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         return CommandResult(1, "runHelper: exhausted retries")
     }
 
+    private fun hasCveRootTransport(): Boolean {
+        val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
+        if (!helper.exists()) return false
+
+        return runCatching {
+            val result = runHelper(helper, "-c", "id -u")
+            result.code == 0 && result.output.trim() == "0"
+        }.getOrDefault(false)
+    }
+
+    fun unrootCurrentSession() {
+        if (mutableState.value.phase != InstallPhase.Installed ||
+            !mutableState.value.canUnrootCurrentSession
+        ) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            mutableState.value = mutableState.value.copy(
+                phase = InstallPhase.Checking,
+                message = app.getString(R.string.status_unrooting),
+                canUnrootCurrentSession = false,
+            )
+            appendLog("[*] Verifying current-session CVE root transport...")
+
+            val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
+            if (!hasCveRootTransport()) {
+                appendLog("[-] CVE root transport is no longer available")
+                mutableState.value = mutableState.value.copy(
+                    phase = InstallPhase.Installed,
+                    message = app.getString(R.string.status_ksu_active),
+                )
+                return@launch
+            }
+
+            val command = CURRENT_SESSION_UNROOT_COMMAND
+            appendLog("[*] Removing root state through the current CVE session...")
+            val result = runHelper(helper, "-c", command)
+            if (result.code == 0 && result.output.contains("UNROOT_CLEANUP_OK")) {
+                appendLog("[+] Cleanup complete; reboot requested")
+            } else {
+                appendLog(
+                    "[-] Current-session cleanup failed (exit=${result.code}):\n" +
+                            result.output.ifBlank { "no output" })
+                mutableState.value = mutableState.value.copy(
+                    phase = InstallPhase.Installed,
+                    message = app.getString(R.string.status_ksu_active),
+                    canUnrootCurrentSession = hasCveRootTransport(),
+                )
+            }
+        }
+    }
+
     private fun awaitDaemonSocket() {
         val sock = File("/data/local/tmp/temp_su.sock")
         val deadline = SystemClock.elapsedRealtime() + 15_000L
@@ -491,5 +553,43 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         private const val EXPLOIT_TOTAL_MILLIS = 1_800_000L
         private const val MAX_LOG_CHARS = 5 * 1024 * 1024
         private val LOG_POLL_INTERVAL = 250.milliseconds
+        private val CURRENT_SESSION_UNROOT_COMMAND = """
+            failed=0
+            cleanup_step() {
+                name="${'$'}1"
+                shift
+                if "${'$'}@"; then
+                    echo "UNROOT_OK:${'$'}name"
+                else
+                    echo "UNROOT_FAIL:${'$'}name:${'$'}?"
+                    failed=1
+                fi
+            }
+            current_uid="${'$'}(id -u)"
+            current_context="${'$'}(id -Z 2>/dev/null || true)"
+            echo "UNROOT_IDENTITY:uid=${'$'}current_uid:context=${'$'}current_context"
+            if [ "${'$'}current_uid" != 0 ]; then
+                echo "UNROOT_CLEANUP_FAILED:not-root"
+                exit 1
+            fi
+            cleanup_step data-adb rm -rf /data/adb
+            cleanup_step apex-mount sh -c 'umount /apex/com.android.virt/bin 2>/dev/null || true'
+            cleanup_step selinux sh -c 'setenforce 1 2>/dev/null || true'
+            cleanup_step cve-app rm -f /data/local/tmp/cve-2026-43499-app.so
+            cleanup_step cve-root rm -f /data/local/tmp/cve-2026-43499-root
+            cleanup_step ksud rm -f /data/local/tmp/ksud-pixel
+            cleanup_step su-client rm -f /data/local/tmp/su
+            cleanup_step su-staged rm -f /data/local/tmp/.su.new.*
+            cleanup_step su-socket rm -f /data/local/tmp/temp_su.sock
+            cleanup_step exploit-log rm -f /data/local/tmp/exploit.log
+            cleanup_step daemon-log rm -f /data/local/tmp/su_daemon.log
+            sync
+            if [ "${'$'}failed" -ne 0 ]; then
+                echo "UNROOT_CLEANUP_FAILED"
+                exit 1
+            fi
+            echo "UNROOT_CLEANUP_OK"
+            svc power reboot || reboot
+        """.trimIndent()
     }
 }

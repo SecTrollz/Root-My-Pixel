@@ -1,6 +1,5 @@
 package com.alex193a.rootmypixel.utils
 
-import android.content.Context
 import java.io.File
 
 /**
@@ -17,46 +16,67 @@ object NativeProbe {
      */
     external fun run(): String
 
+    /** Returns the KernelSU driver status obtained through the official supercall UAPI. */
+    external fun getKernelSuInfoNative(): String
+
     /**
      * Check if KernelSU/ReSukiSU is active via kernel driver syscall in a fork-isolated process.
+     * Kept for callers that only require a Boolean.
      */
     external fun isKernelSuActiveNative(): Boolean
 
     /**
-     * Check if KernelSU/ReSukiSU or local root daemon is currently active on the device.
+     * Check the actual KernelSU/ReSukiSU kernel driver. This deliberately does
+     * not treat `su`, a temporary CVE daemon, or filesystem paths as proof that
+     * KernelSU is loaded.
      */
-    fun isKernelSuActive(context: Context? = null): Boolean {
-        return runCatching { isKernelSuActiveNative() }.getOrDefault(false) ||
-                checkSuBinary() ||
-                (context != null && checkExploitDaemon(context)) ||
-                File("/dev/kernelsu").exists() ||
-                File("/sys/kernel/kernelsu").exists()
-    }
+    fun kernelSuStatus(): KernelSuStatus =
+        runCatching { KernelSuStatus.parse(getKernelSuInfoNative()) }
+            .getOrDefault(KernelSuStatus())
 
-    private fun checkSuBinary(): Boolean {
-        return runCatching {
-            val p1 = ProcessBuilder("su", "-v").redirectErrorStream(true).start()
-            val out1 = p1.inputStream.bufferedReader().use { it.readText().trim() }
-            if (p1.waitFor() == 0 && out1.isNotBlank()) return true
+    fun isKernelSuActive(): Boolean = kernelSuStatus().isActive
 
-            val p2 = ProcessBuilder("su", "-c", "id").redirectErrorStream(true).start()
-            val out2 = p2.inputStream.bufferedReader().use { it.readText().trim() }
-            if (p2.waitFor() == 0 && out2.contains("uid=0")) return true
+    data class KernelSuStatus(
+        val probeCompleted: Boolean = false,
+        val driverPresent: Boolean = false,
+        val driverResponsive: Boolean = false,
+        val appRootGranted: Boolean = false,
+        val version: UInt = 0u,
+        val flags: UInt = 0u,
+        val features: UInt = 0u,
+        val uapiVersion: UInt = 0u,
+    ) {
+        val isActive: Boolean
+            get() = probeCompleted && driverPresent && driverResponsive && version > 0u
 
-            false
-        }.getOrDefault(false)
-    }
+        val isLateLoad: Boolean
+            get() = flags and FLAG_LATE_LOAD != 0u
 
-    private fun checkExploitDaemon(context: Context): Boolean {
-        val helper = File(context.applicationInfo.nativeLibraryDir, "libcve43499root.so")
-        if (!helper.exists()) return false
-        return runCatching {
-            val process = ProcessBuilder(helper.absolutePath, "-c", "id")
-                .redirectErrorStream(true)
-                .start()
-            val output = process.inputStream.bufferedReader().use { it.readText().trim() }
-            process.waitFor() == 0 && output.contains("uid=0")
-        }.getOrDefault(false)
+        companion object {
+            private val FLAG_LATE_LOAD: UInt = 1u shl 2
+
+            fun parse(raw: String): KernelSuStatus {
+                val values = raw.split(';')
+                    .mapNotNull { entry ->
+                        entry.split('=', limit = 2).takeIf { it.size == 2 }
+                    }
+                    .associate { (key, value) -> key to value }
+
+                fun boolean(key: String) = values[key] == "1"
+                fun unsigned(key: String) = values[key]?.toUIntOrNull() ?: 0u
+
+                return KernelSuStatus(
+                    probeCompleted = boolean("probe"),
+                    driverPresent = boolean("present"),
+                    driverResponsive = boolean("responsive"),
+                    appRootGranted = boolean("granted"),
+                    version = unsigned("version"),
+                    flags = unsigned("flags"),
+                    features = unsigned("features"),
+                    uapiVersion = unsigned("uapi"),
+                )
+            }
+        }
     }
 
     /**

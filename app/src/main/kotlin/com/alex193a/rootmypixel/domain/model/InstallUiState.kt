@@ -5,6 +5,8 @@ data class InstallUiState(
     val message: String = "",
     val probeOutput: String = "",
     val log: String = "",
+    /** True only for the successful install run that still has a usable CVE root transport. */
+    val canUnrootCurrentSession: Boolean = false,
 ) {
     val busy: Boolean
         get() = phase in setOf(
