@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alex193a.rootmypixel.R
 import com.alex193a.rootmypixel.domain.model.InstallPhase
+import com.alex193a.rootmypixel.ui.components.UnrootIncompleteSheet
 import com.alex193a.rootmypixel.ui.theme.RootMyPixelTheme
 import kotlinx.coroutines.delay
 import kotlin.time.Duration.Companion.milliseconds
@@ -94,6 +95,8 @@ class InstallActivity : ComponentActivity() {
                         onRetry = { installViewModel.install(profileId, permissiveOnly) },
                         onSoftReboot = { installViewModel.softReboot() },
                         onUnroot = installViewModel::unrootCurrentSession,
+                        onCancelUnrootReboot = installViewModel::cancelUnrootReboot,
+                        onRebootAnyway = installViewModel::continueUnrootReboot,
                         onClose = { finish() },
                         modifier = Modifier.padding(padding),
                     )
@@ -138,6 +141,8 @@ private fun InstallScreen(
     onRetry: () -> Unit,
     onSoftReboot: () -> Unit,
     onUnroot: () -> Unit,
+    onCancelUnrootReboot: () -> Unit,
+    onRebootAnyway: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -176,6 +181,14 @@ private fun InstallScreen(
                     Text(stringResource(R.string.action_cancel))
                 }
             },
+        )
+    }
+
+    installState.unrootWarning?.let { warning ->
+        UnrootIncompleteSheet(
+            warning = warning,
+            onDismiss = onCancelUnrootReboot,
+            onRebootAnyway = onRebootAnyway,
         )
     }
 

@@ -14,12 +14,15 @@ import com.alex193a.rootmypixel.domain.model.DeviceSnapshot
 import com.alex193a.rootmypixel.domain.model.InstallPhase
 import com.alex193a.rootmypixel.domain.model.InstallUiState
 import com.alex193a.rootmypixel.domain.model.TargetProfile
+import com.alex193a.rootmypixel.domain.model.UnrootWarningUi
 import com.alex193a.rootmypixel.domain.model.VerifiedPayloads
 import com.alex193a.rootmypixel.domain.usecase.DownloadPayloadsUseCase
 import com.alex193a.rootmypixel.domain.usecase.ResolveTargetUseCase
 import com.alex193a.rootmypixel.shizuku.ExploitService
 import com.alex193a.rootmypixel.shizuku.IExploitService
 import com.alex193a.rootmypixel.utils.NativeProbe
+import com.alex193a.rootmypixel.utils.UnrootCommandOutcome
+import com.alex193a.rootmypixel.utils.UnrootIssue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,6 +34,7 @@ import kotlinx.coroutines.launch
 import org.koin.java.KoinJavaComponent.get
 import rikka.shizuku.Shizuku
 import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.milliseconds
 
 data class TargetCatalogUiState(
@@ -414,8 +418,16 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             val process = ProcessBuilder(listOf(helper.absolutePath) + arguments)
                 .redirectErrorStream(true)
                 .start()
+            val finished = process.waitFor(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                process.waitFor()
+            }
             val output = process.inputStream.bufferedReader().use { it.readText() }
-            val result = CommandResult(process.waitFor(), output.trim())
+            val result = CommandResult(
+                if (finished) process.exitValue() else COMMAND_TIMEOUT_CODE,
+                output.trim(),
+            )
 
             val transient = result.output.contains("No such file or directory") ||
                 result.output.contains("Connection refused") ||
@@ -454,29 +466,95 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
             if (!hasCveRootTransport()) {
                 appendLog("[-] CVE root transport is no longer available")
-                mutableState.value = mutableState.value.copy(
-                    phase = InstallPhase.Installed,
-                    message = app.getString(R.string.status_ksu_active),
-                )
+                showUnrootWarning(UnrootIssue.affectedByMissingTransport, canRetry = false)
                 return@launch
             }
 
-            val command = CURRENT_SESSION_UNROOT_COMMAND
+            val command = runCatching {
+                app.assets.open("unroot.sh").bufferedReader().use { it.readText() }
+            }.getOrElse {
+                showUnrootWarning(listOf(UnrootIssue.Unknown))
+                return@launch
+            }
             appendLog("[*] Removing root state through the current CVE session...")
             val result = runHelper(helper, "-c", command)
-            if (result.code == 0 && result.output.contains("UNROOT_CLEANUP_OK")) {
+            val outcome = UnrootCommandOutcome.parse(result.output)
+            if (outcome.cleanupComplete && outcome.rebootRequested) {
                 appendLog("[+] Cleanup complete; reboot requested")
             } else {
-                appendLog(
-                    "[-] Current-session cleanup failed (exit=${result.code}):\n" +
-                            result.output.ifBlank { "no output" })
-                mutableState.value = mutableState.value.copy(
-                    phase = InstallPhase.Installed,
-                    message = app.getString(R.string.status_ksu_active),
-                    canUnrootCurrentSession = hasCveRootTransport(),
-                )
+                appendLog("[!] Unroot output (exit=${result.code}):\n${result.output.ifBlank { "no output" }}")
+                val issues = outcome.issues.toMutableList()
+                if (outcome.cleanupComplete && !outcome.rebootRequested) {
+                    issues += UnrootIssue.Reboot
+                }
+                if (!outcome.hasStructuredOutput) issues += UnrootIssue.Unknown
+                showUnrootWarning(issues)
             }
         }
+    }
+
+    fun continueUnrootReboot() {
+        if (mutableState.value.unrootWarning == null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            mutableState.value = mutableState.value.copy(
+                phase = InstallPhase.Checking,
+                message = app.getString(R.string.status_unrooting),
+                unrootWarning = null,
+            )
+            appendLog("[*] User requested reboot despite incomplete cleanup")
+
+            val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
+            val helperOutput = if (helper.exists()) {
+                runCatching { runHelper(helper, "-c", REBOOT_COMMAND).output }.getOrDefault("")
+            } else {
+                ""
+            }
+            if (helperOutput.contains("UNROOT_REBOOT_REQUESTED")) return@launch
+
+            val handle = runCatching { bindExploitService() }.getOrNull()
+            val shizukuOutput = if (handle != null) {
+                try {
+                    handle.service.exec(REBOOT_COMMAND)
+                } catch (_: Exception) {
+                    ""
+                } finally {
+                    unbindExploitService(handle)
+                }
+            } else {
+                ""
+            }
+            if (!shizukuOutput.contains("UNROOT_REBOOT_REQUESTED")) {
+                showUnrootWarning(listOf(UnrootIssue.Reboot))
+            }
+        }
+    }
+
+    fun cancelUnrootReboot() {
+        mutableState.value = mutableState.value.copy(
+            phase = InstallPhase.Installed,
+            message = app.getString(R.string.status_unroot_incomplete),
+            unrootWarning = null,
+        )
+        appendLog("[*] Reboot cancelled by user")
+    }
+
+    private fun showUnrootWarning(
+        issues: List<UnrootIssue>,
+        canRetry: Boolean? = null,
+    ) {
+        val outcome = UnrootCommandOutcome(
+            cleanupComplete = false,
+            rebootRequested = false,
+            transportUnavailable = UnrootIssue.RootTransport in issues,
+            issues = issues.distinct(),
+            hasStructuredOutput = true,
+        )
+        mutableState.value = mutableState.value.copy(
+            phase = InstallPhase.Installed,
+            message = app.getString(R.string.status_unroot_incomplete),
+            canUnrootCurrentSession = canRetry ?: hasCveRootTransport(),
+            unrootWarning = UnrootWarningUi(outcome.failedItemsText(app)),
+        )
     }
 
     private fun awaitDaemonSocket() {
@@ -552,44 +630,11 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         private const val EXPLOIT_STALL_MILLIS = 600_000L
         private const val EXPLOIT_TOTAL_MILLIS = 1_800_000L
         private const val MAX_LOG_CHARS = 5 * 1024 * 1024
+        private const val COMMAND_TIMEOUT_SECONDS = 90L
+        private const val COMMAND_TIMEOUT_CODE = 124
         private val LOG_POLL_INTERVAL = 250.milliseconds
-        private val CURRENT_SESSION_UNROOT_COMMAND = """
-            failed=0
-            cleanup_step() {
-                name="${'$'}1"
-                shift
-                if "${'$'}@"; then
-                    echo "UNROOT_OK:${'$'}name"
-                else
-                    echo "UNROOT_FAIL:${'$'}name:${'$'}?"
-                    failed=1
-                fi
-            }
-            current_uid="${'$'}(id -u)"
-            current_context="${'$'}(id -Z 2>/dev/null || true)"
-            echo "UNROOT_IDENTITY:uid=${'$'}current_uid:context=${'$'}current_context"
-            if [ "${'$'}current_uid" != 0 ]; then
-                echo "UNROOT_CLEANUP_FAILED:not-root"
-                exit 1
-            fi
-            cleanup_step data-adb rm -rf /data/adb
-            cleanup_step apex-mount sh -c 'umount /apex/com.android.virt/bin 2>/dev/null || true'
-            cleanup_step selinux sh -c 'setenforce 1 2>/dev/null || true'
-            cleanup_step cve-app rm -f /data/local/tmp/cve-2026-43499-app.so
-            cleanup_step cve-root rm -f /data/local/tmp/cve-2026-43499-root
-            cleanup_step ksud rm -f /data/local/tmp/ksud-pixel
-            cleanup_step su-client rm -f /data/local/tmp/su
-            cleanup_step su-staged rm -f /data/local/tmp/.su.new.*
-            cleanup_step su-socket rm -f /data/local/tmp/temp_su.sock
-            cleanup_step exploit-log rm -f /data/local/tmp/exploit.log
-            cleanup_step daemon-log rm -f /data/local/tmp/su_daemon.log
-            sync
-            if [ "${'$'}failed" -ne 0 ]; then
-                echo "UNROOT_CLEANUP_FAILED"
-                exit 1
-            fi
-            echo "UNROOT_CLEANUP_OK"
-            svc power reboot || reboot
-        """.trimIndent()
+        private const val REBOOT_COMMAND =
+            "sync; if svc power reboot || reboot; then " +
+                    "echo UNROOT_REBOOT_REQUESTED; else echo UNROOT_FAIL:reboot:${'$'}?; fi"
     }
 }

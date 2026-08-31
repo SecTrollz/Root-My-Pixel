@@ -29,6 +29,23 @@
     <string name="unroot_dialog_title">確定要清除 Root 嗎？</string>
     <string name="unroot_dialog_message">這將會刪除所有臨時漏洞利用檔案、KernelSU 資料 (/data/adb)，並重新啟動裝置以完全恢復原生核心狀態。</string>
     <string name="status_unrooting">正在清理並重開機…</string>
+    <string name="status_unroot_incomplete">清理未完成 — 正在等候你的決定</string>
+    <string name="unroot_incomplete_title">部分項目未能移除</string>
+    <string name="unroot_incomplete_message">以下清理操作失敗：</string>
+    <string name="unroot_temporary_root_reboot_note">你仍可安全地重新啟動。由於此漏洞利用僅提供暫時 Root，重新啟動後 Root 權限將會消失；但上述項目可能仍留在儲存空間中。</string>
+    <string name="action_reboot_anyway">仍要重新啟動</string>
+    <string name="action_do_not_reboot">不要重新啟動</string>
+    <string name="unroot_issue_root_transport">無法使用具權限的清理存取</string>
+    <string name="unroot_issue_data_adb">KernelSU 資料（/data/adb）</string>
+    <string name="unroot_issue_apex_mount">暫時 Virt APEX 掛載</string>
+    <string name="unroot_issue_selinux">SELinux enforcing 模式</string>
+    <string name="unroot_issue_cve_app">漏洞利用酬載</string>
+    <string name="unroot_issue_cve_root">Root 輔助程式</string>
+    <string name="unroot_issue_ksud">ReSukiSU 載入器</string>
+    <string name="unroot_issue_exploit_logs">漏洞利用暫存記錄</string>
+    <string name="unroot_issue_root_transport_files">暫時 Root 用戶端與通訊端</string>
+    <string name="unroot_issue_reboot">系統重新啟動要求</string>
+    <string name="unroot_issue_unknown">無法確認清理狀態</string>
     <string name="copied_to_clipboard">日誌已複製到剪貼簿</string>
 
     <!-- Install screen -->

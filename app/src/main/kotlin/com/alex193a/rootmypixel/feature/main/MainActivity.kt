@@ -70,6 +70,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.alex193a.rootmypixel.R
 import com.alex193a.rootmypixel.domain.model.InstallPhase
 import com.alex193a.rootmypixel.domain.model.InstallUiState
+import com.alex193a.rootmypixel.ui.components.UnrootIncompleteSheet
 import com.alex193a.rootmypixel.ui.theme.RootMyPixelTheme
 
 class MainActivity : ComponentActivity() {
@@ -95,6 +96,8 @@ class MainActivity : ComponentActivity() {
                     onRefresh = { installViewModel.refresh() },
                     onInstall = { installViewModel.install() },
                     onUnroot = { installViewModel.unrootAndReboot() },
+                    onCancelUnrootReboot = installViewModel::cancelUnrootReboot,
+                    onRebootAnyway = installViewModel::continueUnrootReboot,
                     onExportLog = { installViewModel.exportLog() },
                 )
             }
@@ -117,6 +120,8 @@ private fun MainScreen(
     onRefresh: () -> Unit,
     onInstall: () -> Unit,
     onUnroot: () -> Unit,
+    onCancelUnrootReboot: () -> Unit,
+    onRebootAnyway: () -> Unit,
     onExportLog: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -160,6 +165,14 @@ private fun MainScreen(
                     Text(text = stringResource(R.string.action_cancel))
                 }
             },
+        )
+    }
+
+    state.unrootWarning?.let { warning ->
+        UnrootIncompleteSheet(
+            warning = warning,
+            onDismiss = onCancelUnrootReboot,
+            onRebootAnyway = onRebootAnyway,
         )
     }
 

@@ -7,6 +7,8 @@ data class InstallUiState(
     val log: String = "",
     /** True only for the successful install run that still has a usable CVE root transport. */
     val canUnrootCurrentSession: Boolean = false,
+    /** Non-null while unroot is paused waiting for an explicit reboot decision. */
+    val unrootWarning: UnrootWarningUi? = null,
 ) {
     val busy: Boolean
         get() = phase in setOf(
@@ -16,3 +18,7 @@ data class InstallUiState(
             InstallPhase.LoadingKernelSu,
         )
 }
+
+data class UnrootWarningUi(
+    val failedItemsText: String,
+)

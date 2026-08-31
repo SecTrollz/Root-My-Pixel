@@ -39,6 +39,23 @@
     <string name="unroot_dialog_title">root 権限を削除しますか？</string>
     <string name="unroot_dialog_message">一時 exploit ファイル、KernelSU のデータ (/data/adb) を削除し、端末を再起動して純正カーネル状態に戻します。</string>
     <string name="status_unrooting">クリーンアップと再起動中…</string>
+    <string name="status_unroot_incomplete">クリーンアップ未完了 — 操作を選択してください</string>
+    <string name="unroot_incomplete_title">削除できなかった項目があります</string>
+    <string name="unroot_incomplete_message">次のクリーンアップ操作に失敗しました：</string>
+    <string name="unroot_temporary_root_reboot_note">このまま安全に再起動できます。この exploit が提供する root 権限は一時的なため、再起動後に root 権限は失われます。ただし、上記の項目はストレージに残る場合があります。</string>
+    <string name="action_reboot_anyway">このまま再起動</string>
+    <string name="action_do_not_reboot">再起動しない</string>
+    <string name="unroot_issue_root_transport">特権クリーンアップへのアクセスを利用できませんでした</string>
+    <string name="unroot_issue_data_adb">KernelSU データ（/data/adb）</string>
+    <string name="unroot_issue_apex_mount">一時 Virt APEX マウント</string>
+    <string name="unroot_issue_selinux">SELinux enforcing モード</string>
+    <string name="unroot_issue_cve_app">Exploit ペイロード</string>
+    <string name="unroot_issue_cve_root">Root ヘルパー</string>
+    <string name="unroot_issue_ksud">ReSukiSU ローダー</string>
+    <string name="unroot_issue_exploit_logs">Exploit の一時ログ</string>
+    <string name="unroot_issue_root_transport_files">一時 root クライアントとソケット</string>
+    <string name="unroot_issue_reboot">システム再起動要求</string>
+    <string name="unroot_issue_unknown">クリーンアップ状態を確認できませんでした</string>
     <string name="copied_to_clipboard">ログをクリップボードにコピーしました</string>
 
     <!-- Install screen -->

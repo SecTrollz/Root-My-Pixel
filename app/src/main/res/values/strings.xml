@@ -29,6 +29,23 @@
     <string name="unroot_dialog_title">Remove root?</string>
     <string name="unroot_dialog_message">This will remove all temporary exploit files, delete KernelSU data (/data/adb), and reboot your device to fully restore stock kernel state.</string>
     <string name="status_unrooting">Cleaning up and rebooting…</string>
+    <string name="status_unroot_incomplete">Cleanup incomplete — waiting for your decision</string>
+    <string name="unroot_incomplete_title">Some items were not removed</string>
+    <string name="unroot_incomplete_message">The following cleanup operations failed:</string>
+    <string name="unroot_temporary_root_reboot_note">You can still reboot safely. Root access will disappear after reboot because this exploit only provides temporary root; the items listed above may remain on storage.</string>
+    <string name="action_reboot_anyway">Reboot anyway</string>
+    <string name="action_do_not_reboot">Do not reboot</string>
+    <string name="unroot_issue_root_transport">Privileged cleanup access was unavailable</string>
+    <string name="unroot_issue_data_adb">KernelSU data (/data/adb)</string>
+    <string name="unroot_issue_apex_mount">Temporary Virt APEX mount</string>
+    <string name="unroot_issue_selinux">SELinux enforcing mode</string>
+    <string name="unroot_issue_cve_app">Exploit payload</string>
+    <string name="unroot_issue_cve_root">Root helper</string>
+    <string name="unroot_issue_ksud">ReSukiSU loader</string>
+    <string name="unroot_issue_exploit_logs">Exploit temporary logs</string>
+    <string name="unroot_issue_root_transport_files">Temporary root client and socket</string>
+    <string name="unroot_issue_reboot">System reboot request</string>
+    <string name="unroot_issue_unknown">Cleanup status could not be verified</string>
     <string name="copied_to_clipboard">Log copied to clipboard</string>
 
     <!-- Install screen -->

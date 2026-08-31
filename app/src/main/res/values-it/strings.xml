@@ -27,6 +27,23 @@
     <string name="unroot_dialog_title">Rimuovere i permessi di root?</string>
     <string name="unroot_dialog_message">Questa azione eliminerà tutti i file temporanei dell\'exploit, le configurazioni di KernelSU (/data/adb) e riavvierà il dispositivo per ripristinare completamente lo stato stock.</string>
     <string name="status_unrooting">Rimozione root e riavvio in corso…</string>
+    <string name="status_unroot_incomplete">Pulizia incompleta — in attesa di una decisione</string>
+    <string name="unroot_incomplete_title">Alcuni elementi non sono stati rimossi</string>
+    <string name="unroot_incomplete_message">Non è stato possibile completare queste operazioni:</string>
+    <string name="unroot_temporary_root_reboot_note">Puoi comunque riavviare in sicurezza. I permessi di root scompariranno dopo il riavvio perché questo exploit fornisce solo un root temporaneo; gli elementi elencati sopra potrebbero rimanere nella memoria del dispositivo.</string>
+    <string name="action_reboot_anyway">Riavvia comunque</string>
+    <string name="action_do_not_reboot">Non riavviare</string>
+    <string name="unroot_issue_root_transport">Accesso privilegiato per la pulizia non disponibile</string>
+    <string name="unroot_issue_data_adb">Dati KernelSU (/data/adb)</string>
+    <string name="unroot_issue_apex_mount">Mount temporaneo Virt APEX</string>
+    <string name="unroot_issue_selinux">Modalità enforcing di SELinux</string>
+    <string name="unroot_issue_cve_app">Payload dell’exploit</string>
+    <string name="unroot_issue_cve_root">Helper root</string>
+    <string name="unroot_issue_ksud">Loader ReSukiSU</string>
+    <string name="unroot_issue_exploit_logs">Log temporanei dell’exploit</string>
+    <string name="unroot_issue_root_transport_files">Client e socket root temporanei</string>
+    <string name="unroot_issue_reboot">Richiesta di riavvio del sistema</string>
+    <string name="unroot_issue_unknown">Impossibile verificare lo stato della pulizia</string>
     <string name="copied_to_clipboard">Log copiato negli appunti</string>
 
     <!-- Install screen -->
