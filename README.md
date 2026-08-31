@@ -84,9 +84,13 @@ Caveats:
 
 ---
 
-## Pre-Root Safety Check: Don't Root Under Someone Else's Control
+## Pre-Root Safety Check: Only the Phone's Physical Holder Ever Gets Root
 
-Root My Pixel is for a device's owner, physically holding it, rooting their own phone — you never need, and shouldn't need, any Device Admin/Owner status yourself; that's irrelevant to normal use. What actually matters is whether *someone else* already administers this device: before rooting, run `scripts/preflight-check.sh`, which checks, automatically, whether this device has a Device Owner configured (full, whole-device MDM/enterprise control provisioned through a deliberate enrollment flow) — because granting root would hand that remote party root-level leverage too, not just you. Root My Pixel's own install flow runs the same check itself and refuses to proceed if it finds one, but you can run the script standalone first:
+Root My Pixel is for a device's owner, physically holding it, rooting their own phone. Whether the device is enrolled in an MDM/enterprise Device Policy Controller (Device Owner, Profile Owner, or any other Device Admin app) is **irrelevant** to that — a corporate-managed phone's legitimate holder can root it exactly like anyone else, and nothing in this app checks or blocks on that status.
+
+The actual guarantee here is structural, not a runtime check you have to trust: Root My Pixel has no `INTERNET` permission and no networking code anywhere (`SecurityInvariantsTest` fails the build if that ever changes), so there is no network path for a signal from outside the phone to reach it at all. Root only ever comes from a local Shizuku Binder session, which itself requires physical or already-locally-paired access — see the on-device setup above.
+
+Two things genuinely could let someone other than the phone's holder influence what happens right now, and `scripts/preflight-check.sh` checks for both, automatically, as non-blocking informational warnings:
 
 ```bash
 rish scripts/preflight-check.sh
@@ -94,11 +98,10 @@ rish scripts/preflight-check.sh
 
 (`rish` is Shizuku's own bundled shell client: once Shizuku is running — see the on-device setup above — open Shizuku → **Use Shizuku in terminal apps** and follow its steps to authorize your terminal. After that, `rish` is a drop-in replacement for `sh`, so the command above works from Termux or any terminal app with no computer involved.)
 
-The script:
-- **Fails** (exit code 1) only if it finds an active Device Owner, and names it — remove it (via the MDM app's own removal flow, or a factory reset) before rooting.
-- **Warns** (but doesn't fail) on a Profile Owner (work profile) or a generic active Device Admin app, since both are common and often benign on a completely normal, fully-owned phone — Find My Device itself typically shows up as a Device Admin. Neither means someone else controls the whole device the way a Device Owner does, so neither blocks a physically-present owner from rooting their own phone. Also warns (non-blocking) if Wireless debugging is currently on, or if a known remote-support/MDM-agent package is installed. All of these are worth a second look, but none is proof of a problem on its own.
+- **Wireless debugging left on** — a standing local-network ADB surface, worth turning back off once Shizuku pairing is done.
+- **A known remote-screen-control app installed** (TeamViewer, AnyDesk, AirDroid, etc.) — these let someone else literally drive the screen remotely. If you didn't install one yourself, worth a look.
 
-It only detects and reports. It never tries to disable Find My Device, Google Play Protect, or any admin policy itself — those are your own legitimate anti-theft/security tools, and even ADB-shell privilege can't safely strip another app's Device Owner grant out from under it. Removal is the honest answer, not something to script around.
+Root My Pixel's own install flow runs the same two checks itself, but nothing here — neither the script nor the app — ever fails or blocks on MDM/Device Owner/Device Admin status. That status is intentionally not part of the trust decision.
 
 ---
 

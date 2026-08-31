@@ -348,58 +348,32 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // --- Pre-root safety: don't hand root to someone other than the person holding the device ---
+    // --- Pre-root check: warn about signals from outside the phone, never about MDM status ---
     //
     // Root My Pixel is for a device's owner, physically holding it, rooting their own
-    // phone — that person never needs, and shouldn't need, any Device Admin/Owner status
-    // themselves; that concept is irrelevant to normal use. The one thing worth blocking
-    // on is a Device Owner: full, whole-device MDM/enterprise control provisioned through
-    // a deliberate enrollment flow, meaning someone other than whoever is holding the
-    // phone right now administers it. Rooting would hand that remote party root too.
+    // phone. Whether the device is enrolled in an MDM/enterprise Device Policy Controller
+    // (Device Owner, Profile Owner, or any other Device Admin app) is irrelevant to that —
+    // a corporate-managed phone's legitimate holder can root it exactly like anyone else,
+    // and this app never checks or blocks on that status. The actual guarantee that only
+    // the physical holder can ever reach root here is structural, not a runtime check:
+    // Root My Pixel has no INTERNET permission and no networking code anywhere (enforced
+    // by SecurityInvariantsTest), so there is no network path for a signal from outside
+    // the phone to reach it at all — root only ever comes from a local Shizuku Binder
+    // session that itself requires physical/local pairing.
     //
-    // A generic active Device Admin component or a work-profile Profile Owner is a much
-    // weaker, noisier signal — Find My Device and plenty of ordinary consumer apps
-    // register as device admins on completely normal, fully-owned personal phones, and a
-    // work profile only manages its own sandboxed profile, not the whole device. Neither
-    // implies someone else controls the device the way a Device Owner does, so neither
-    // blocks — they're surfaced as warnings to review, same as the other checks below.
-    // This only detects and refuses; it never tries to remove or disable anything itself.
-    // Mirrors scripts/preflight-check.sh, which runs the same checks standalone via
-    // `rish` before the app is even opened.
+    // What this function does check, as non-blocking warnings, are two things that
+    // genuinely could let someone other than the phone's holder influence what happens
+    // right now: Wireless debugging left on (a standing local-network ADB surface) and a
+    // known remote-screen-control app being installed (a literal outside input channel).
+    // Neither blocks rooting on its own — both are heuristics worth a glance, not proof of
+    // a problem. Mirrors scripts/preflight-check.sh, which runs the same checks standalone
+    // via `rish` before the app is even opened.
 
     private suspend fun runPreflightSafetyCheck() {
-        appendLog("[*] Checking for an existing remote controller (Device Owner/MDM)...")
+        appendLog("[*] Checking for signals from outside the phone...")
         val handle = bindExploitService()
             ?: throw IllegalStateException("Failed to bind Shizuku UserService for preflight checks")
         try {
-            val devicePolicyDump = handle.service.exec("dumpsys device_policy")
-
-            require(
-                !Regex("device owner:", RegexOption.IGNORE_CASE).containsMatchIn(devicePolicyDump)
-            ) {
-                app.getString(R.string.error_remote_controller_blocking)
-            }
-            appendLog("[+] No Device Owner found — this device isn't under remote/MDM control")
-
-            if (Regex("profile owner", RegexOption.IGNORE_CASE).containsMatchIn(devicePolicyDump)) {
-                appendLog(
-                    "[!] A Profile Owner (work profile) is configured. This only manages its " +
-                        "own sandboxed profile, not the whole device, so it doesn't block " +
-                        "rooting — but review it if you don't recognize it."
-                )
-            }
-            val adminComponents = Regex("admin=ComponentInfo\\{[^}]+\\}")
-                .findAll(devicePolicyDump)
-                .map { it.value }
-                .toSet()
-            if (adminComponents.isNotEmpty()) {
-                appendLog(
-                    "[!] Active Device Admin app(s) found: ${adminComponents.joinToString(", ")}. " +
-                        "This is common and often benign (e.g. Find My Device) and doesn't block " +
-                        "rooting — review it if you don't recognize it."
-                )
-            }
-
             val adbWifi = handle.service.exec("settings get global adb_wifi_enabled")
                 .lineSequence().firstOrNull()?.trim().orEmpty()
             if (adbWifi == "1") {
@@ -417,9 +391,10 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             }
             if (foundRemoteApps.isNotEmpty()) {
                 appendLog(
-                    "[!] Known remote-support/MDM-agent package(s) installed: " +
-                        "${foundRemoteApps.joinToString(", ")}. If you didn't install these " +
-                        "yourself, remove them before rooting."
+                    "[!] Known remote-screen-control app(s) installed: " +
+                        "${foundRemoteApps.joinToString(", ")}. These let someone else drive " +
+                        "the screen remotely — if you didn't install one yourself, remove it " +
+                        "before rooting."
                 )
             }
         } finally {
@@ -718,10 +693,13 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             "sync; if svc power reboot || reboot; then " +
                     "echo UNROOT_REBOOT_REQUESTED; else echo UNROOT_FAIL:reboot:${'$'}?; fi"
 
-        // Non-exhaustive on purpose: a hit here is a prompt to double-check the app is one
-        // you actually intend to have installed, not proof of a problem — legitimate
-        // remote-support tools and legitimate MDM enrollment both use these packages, so
-        // this list only warns (see runPreflightSafetyCheck), it never blocks rooting.
+        // Remote-screen-control apps only — deliberately NOT MDM/DPC packages, since MDM
+        // enrollment is irrelevant to whether the phone's physical holder can root it (see
+        // the comment on runPreflightSafetyCheck). These are apps that let someone else
+        // literally drive the screen remotely, a genuine outside-input channel. Non-
+        // exhaustive on purpose: a hit here is a prompt to double-check the app is one you
+        // actually intend to have installed, not proof of a problem — this list only warns
+        // (see runPreflightSafetyCheck), it never blocks rooting.
         // Keep this in sync with scripts/preflight-check.sh's KNOWN_REMOTE_PKGS.
         private val KNOWN_REMOTE_CONTROL_PACKAGES = listOf(
             "com.teamviewer.host",
@@ -734,12 +712,6 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             "com.splashtop.remote.pad.v2",
             "com.splashtop.streamer",
             "com.remotepc.android",
-            "com.google.android.apps.work.clouddpc",
-            "com.airwatch.androidagent",
-            "com.microsoft.windowsintune.companyportal",
-            "com.citrix.CitrixReceiver",
-            "com.mobileiron.compliance.android",
-            "com.afwsamples.testdpc",
         )
     }
 }
