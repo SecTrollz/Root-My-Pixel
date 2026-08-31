@@ -67,6 +67,23 @@ Root My Pixel lets you *temporarily* gain root access with ReSukiSU in just one 
 
 ---
 
+## Starting Shizuku Without a Computer (On-Device Only)
+
+Root My Pixel only needs Shizuku's Binder service to be up and running (UID 2000) — it doesn't care how you got there. Since Android 11, Shizuku can pair and start entirely through Android's built-in **Wireless debugging** ADB-over-Wi-Fi stack, so the whole setup can be done on the Pixel itself, with no PC, no cable, and no Termux/local ADB client involved.
+
+1. **Enable Developer options.** Settings → About phone → tap **Build number** 7 times.
+2. **Enable Wireless debugging.** Settings → System → Developer options → turn on **Wireless debugging** (keep the device on Wi-Fi; it doesn't need internet, just an active local network).
+3. **Pair once.** Open the **Shizuku** app, scroll to the *Start via Wireless debugging* card, and tap **Pair device with pairing code**. This opens the system "Wireless debugging → Pair device with pairing code" screen showing a 6-digit code and host:port. Enter that code back in Shizuku's pairing dialog — you'll see "Pairing successful." This step only has to be done once per device (until you reset network settings).
+4. **Start Shizuku.** Back on the *Start via Wireless debugging* card, tap **Start**. Shizuku briefly opens a system screen to grant itself the ADB shell, then reports as running.
+5. Open **Root My Pixel** — the app will detect the active Shizuku binder (UID 2000) the same way it would over a USB/PC-tethered ADB session, and the exploit/root flow proceeds normally.
+
+Caveats:
+- Because there is no persistent daemon, Shizuku's wireless-debugging shell does **not** survive a reboot — repeat steps 4 (and occasionally 2–3, if pairing is dropped) after every restart.
+- Some OEM battery/network optimizers kill background apps' local-network access; if Shizuku gets stuck on "Searching for pairing service," allow it unrestricted background activity and keep it in the foreground while pairing.
+- If step 4 fails, toggle **Wireless debugging** off and back on, then retry.
+
+---
+
 ## Building from Source
 
 To compile the entire project (native helper, exploit payloads for all targets, and the final debug APK):
