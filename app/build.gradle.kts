@@ -11,7 +11,7 @@ android {
     defaultConfig {
         applicationId = "com.alex193a.rootmypixel"
         minSdk = 33
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 5
         versionName = "1.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

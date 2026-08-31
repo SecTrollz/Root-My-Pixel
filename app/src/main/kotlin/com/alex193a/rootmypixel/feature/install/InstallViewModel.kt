@@ -181,6 +181,8 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 }
                 appendLog("[*] Using Shizuku shell access: $useShizuku")
 
+                runPreflightSafetyCheck()
+
                 setPhase(InstallPhase.Exploiting, app.getString(R.string.status_exploit))
                 executeExploit(payloads)
 
@@ -343,6 +345,60 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             Shizuku.getUid() == 2000
         } catch (_: Exception) {
             false
+        }
+    }
+
+    // --- Pre-root check: warn about signals from outside the phone, never about MDM status ---
+    //
+    // Root My Pixel is for a device's owner, physically holding it, rooting their own
+    // phone. Whether the device is enrolled in an MDM/enterprise Device Policy Controller
+    // (Device Owner, Profile Owner, or any other Device Admin app) is irrelevant to that —
+    // a corporate-managed phone's legitimate holder can root it exactly like anyone else,
+    // and this app never checks or blocks on that status. The actual guarantee that only
+    // the physical holder can ever reach root here is structural, not a runtime check:
+    // Root My Pixel has no INTERNET permission and no networking code anywhere (enforced
+    // by SecurityInvariantsTest), so there is no network path for a signal from outside
+    // the phone to reach it at all — root only ever comes from a local Shizuku Binder
+    // session that itself requires physical/local pairing.
+    //
+    // What this function does check, as non-blocking warnings, are two things that
+    // genuinely could let someone other than the phone's holder influence what happens
+    // right now: Wireless debugging left on (a standing local-network ADB surface) and a
+    // known remote-screen-control app being installed (a literal outside input channel).
+    // Neither blocks rooting on its own — both are heuristics worth a glance, not proof of
+    // a problem. Mirrors scripts/preflight-check.sh, which runs the same checks standalone
+    // via `rish` before the app is even opened.
+
+    private suspend fun runPreflightSafetyCheck() {
+        appendLog("[*] Checking for signals from outside the phone...")
+        val handle = bindExploitService()
+            ?: throw IllegalStateException("Failed to bind Shizuku UserService for preflight checks")
+        try {
+            val adbWifi = handle.service.exec("settings get global adb_wifi_enabled")
+                .lineSequence().firstOrNull()?.trim().orEmpty()
+            if (adbWifi == "1") {
+                appendLog(
+                    "[!] Wireless debugging is currently ON. If you only enabled it to pair " +
+                        "Shizuku, turn it back off (Settings > Developer options > Wireless " +
+                        "debugging) once you're done — leaving it on is a standing " +
+                        "local-network attack surface."
+                )
+            }
+
+            val installedPackages = handle.service.exec("pm list packages")
+            val foundRemoteApps = KNOWN_REMOTE_CONTROL_PACKAGES.filter { pkg ->
+                installedPackages.contains("package:$pkg")
+            }
+            if (foundRemoteApps.isNotEmpty()) {
+                appendLog(
+                    "[!] Known remote-screen-control app(s) installed: " +
+                        "${foundRemoteApps.joinToString(", ")}. These let someone else drive " +
+                        "the screen remotely — if you didn't install one yourself, remove it " +
+                        "before rooting."
+                )
+            }
+        } finally {
+            unbindExploitService(handle)
         }
     }
 
@@ -636,5 +692,26 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         private const val REBOOT_COMMAND =
             "sync; if svc power reboot || reboot; then " +
                     "echo UNROOT_REBOOT_REQUESTED; else echo UNROOT_FAIL:reboot:${'$'}?; fi"
+
+        // Remote-screen-control apps only — deliberately NOT MDM/DPC packages, since MDM
+        // enrollment is irrelevant to whether the phone's physical holder can root it (see
+        // the comment on runPreflightSafetyCheck). These are apps that let someone else
+        // literally drive the screen remotely, a genuine outside-input channel. Non-
+        // exhaustive on purpose: a hit here is a prompt to double-check the app is one you
+        // actually intend to have installed, not proof of a problem — this list only warns
+        // (see runPreflightSafetyCheck), it never blocks rooting.
+        // Keep this in sync with scripts/preflight-check.sh's KNOWN_REMOTE_PKGS.
+        private val KNOWN_REMOTE_CONTROL_PACKAGES = listOf(
+            "com.teamviewer.host",
+            "com.teamviewer.quicksupport.market",
+            "com.teamviewer.quicksupport.addon",
+            "com.anydesk.anydeskandroid",
+            "com.sand.airdroid",
+            "com.sand.airmirror",
+            "com.rsupport.mobizen.mvagent",
+            "com.splashtop.remote.pad.v2",
+            "com.splashtop.streamer",
+            "com.remotepc.android",
+        )
     }
 }
