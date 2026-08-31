@@ -50,6 +50,8 @@ TARGETS=(
   "mustang-CP2A.260705.006"   # Pixel 10 Pro XL
   "comet-CP2A.260705.006"     # Pixel 9 Pro Fold
   "caiman-CP2A.260705.006"    # Pixel 9 Pro
+  "komodo-CP2A.260705.006"    # Pixel 9 Pro XL
+  "tokay-CP2A.260705.006"     # Pixel 9
   "tegu-CP2A.260705.006"      # Pixel 9a
   "husky-CP2A.260705.006"     # Pixel 8 Pro
   "shiba-CP2A.260705.006"     # Pixel 8
@@ -57,10 +59,12 @@ TARGETS=(
   "lynx-CP2A.260705.006"      # Pixel 7a
   "cheetah-CP2A.260705.006"   # Pixel 7 Pro
   "panther-CP2A.260705.006"   # Pixel 7
+  "panther-BP2A.250705.008"   # Pixel 7 (older build)
   "bluejay-CP2A.260705.006"   # Pixel 6a (Android 17)
   "bluejay-CP1A.260405.005"   # Pixel 6a (Android 16)
   "oriole-CP2A.260705.006"    # Pixel 6
   "raven-CP2A.260705.006"     # Pixel 6 Pro
+  "stallion-CP2A.260805.005"  # Pixel 10a
 )
 
 echo ""
