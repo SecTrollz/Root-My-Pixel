@@ -42,9 +42,9 @@ Root My Pixel lets you *temporarily* gain root access with ReSukiSU in just one 
 | **Pixel 10 Pro XL**   | `mustang`  | `CP2A.260705.006` | `android15-6.6` | ✅      |
 | **Pixel 10 Pro Fold** | `rango`    | `CP2A.260705.006` | `android15-6.6` | ✅      |
 | **Pixel 10a**         | `stallion` | `CP2A.260805.005` | `android14-6.1` | ✅      |
-| **Pixel 9 Pro Fold**  | `comet`    | `CP2A.260705.006` | `android15-6.1` | ✅      |
-| **Pixel 9 Pro**       | `caiman`   | `CP2A.260705.006` | `android15-6.1` | ✅      |
-| **Pixel 9 Pro XL**    | `komodo`   | `CP2A.260705.006` | `android15-6.1` | ✅      |
+| **Pixel 9 Pro Fold**  | `comet`    | `CP2A.260705.006` | `android14-6.1` | ✅      |
+| **Pixel 9 Pro**       | `caiman`   | `CP2A.260705.006` | `android14-6.1` | ✅      |
+| **Pixel 9 Pro XL**    | `komodo`   | `CP2A.260705.006` | `android14-6.1` | ✅      |
 | **Pixel 9**           | `tokay`    | `CP2A.260705.006` | `android14-6.1` | ✅      |
 | **Pixel 9a**          | `tegu`     | `CP2A.260705.006` | `android14-6.1` | ✅      |
 | **Pixel 8 Pro**       | `husky`    | `CP2A.260705.006` | `android14-6.1` | ✅      |
@@ -81,6 +81,24 @@ Caveats:
 - Because there is no persistent daemon, Shizuku's wireless-debugging shell does **not** survive a reboot — repeat steps 4 (and occasionally 2–3, if pairing is dropped) after every restart.
 - Some OEM battery/network optimizers kill background apps' local-network access; if Shizuku gets stuck on "Searching for pairing service," allow it unrestricted background activity and keep it in the foreground while pairing.
 - If step 4 fails, toggle **Wireless debugging** off and back on, then retry.
+
+---
+
+## Pre-Root Safety Check: Don't Root Under Someone Else's Control
+
+Before rooting, run `scripts/preflight-check.sh`. It checks, automatically, whether this device already has a remote-control channel active — an MDM/enterprise Device Policy Controller, a Device Owner, a Profile Owner, or any other active Device Admin app — because granting root would hand that remote party root-level leverage too, not just you. Root My Pixel's own install flow runs the same checks itself and refuses to proceed if it finds one, but you can run the script standalone first:
+
+```bash
+rish scripts/preflight-check.sh
+```
+
+(`rish` is Shizuku's own bundled shell client: once Shizuku is running — see the on-device setup above — open Shizuku → **Use Shizuku in terminal apps** and follow its steps to authorize your terminal. After that, `rish` is a drop-in replacement for `sh`, so the command above works from Termux or any terminal app with no computer involved.)
+
+The script:
+- **Fails** (exit code 1) if it finds an active Device Owner, Profile Owner, or Device Admin app, and names it — remove it (via that app's own removal flow, or a factory reset for a Device Owner) before rooting.
+- **Warns** (but doesn't fail) if Wireless debugging is currently on, or if a known remote-support/MDM-agent package is installed — both are worth a second look, but neither is proof of a problem on its own.
+
+It only detects and reports. It never tries to disable Find My Device, Google Play Protect, or any admin policy itself — those are your own legitimate anti-theft/security tools, and even ADB-shell privilege can't safely strip another app's Device Owner grant out from under it. Removal is the honest answer, not something to script around.
 
 ---
 

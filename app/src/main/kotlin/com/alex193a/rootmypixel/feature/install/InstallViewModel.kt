@@ -181,6 +181,8 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 }
                 appendLog("[*] Using Shizuku shell access: $useShizuku")
 
+                runPreflightSafetyCheck()
+
                 setPhase(InstallPhase.Exploiting, app.getString(R.string.status_exploit))
                 executeExploit(payloads)
 
@@ -343,6 +345,69 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             Shizuku.getUid() == 2000
         } catch (_: Exception) {
             false
+        }
+    }
+
+    // --- Pre-root safety: don't hand root to an existing remote controller ---
+    //
+    // If the device already has a remote-control channel active (an MDM/enterprise
+    // Device Policy Controller, a Device Owner, a Profile Owner, or some other active
+    // Device Admin app), granting root hands that remote party root-level leverage too —
+    // not just the device's owner. This only detects and refuses; it never tries to
+    // remove or disable anything itself. Mirrors scripts/preflight-check.sh, which runs
+    // the same checks standalone via `rish` before the app is even opened.
+
+    private suspend fun runPreflightSafetyCheck() {
+        appendLog("[*] Checking for an existing remote controller (Device Admin/MDM)...")
+        val handle = bindExploitService()
+            ?: throw IllegalStateException("Failed to bind Shizuku UserService for preflight checks")
+        try {
+            val devicePolicyDump = handle.service.exec("dumpsys device_policy")
+            val blockers = mutableListOf<String>()
+
+            if (Regex("device owner:", RegexOption.IGNORE_CASE).containsMatchIn(devicePolicyDump)) {
+                blockers += "a Device Owner is configured"
+            }
+            if (Regex("profile owner", RegexOption.IGNORE_CASE).containsMatchIn(devicePolicyDump)) {
+                blockers += "a Profile Owner (work profile) is configured"
+            }
+            val adminComponents = Regex("admin=ComponentInfo\\{[^}]+\\}")
+                .findAll(devicePolicyDump)
+                .map { it.value }
+                .toSet()
+            if (adminComponents.isNotEmpty()) {
+                blockers += "active Device Admin app(s): ${adminComponents.joinToString(", ")}"
+            }
+
+            require(blockers.isEmpty()) {
+                app.getString(R.string.error_remote_controller_blocking, blockers.joinToString("; "))
+            }
+            appendLog("[+] No Device Owner, Profile Owner, or active Device Admin app found")
+
+            val adbWifi = handle.service.exec("settings get global adb_wifi_enabled")
+                .lineSequence().firstOrNull()?.trim().orEmpty()
+            if (adbWifi == "1") {
+                appendLog(
+                    "[!] Wireless debugging is currently ON. If you only enabled it to pair " +
+                        "Shizuku, turn it back off (Settings > Developer options > Wireless " +
+                        "debugging) once you're done — leaving it on is a standing " +
+                        "local-network attack surface."
+                )
+            }
+
+            val installedPackages = handle.service.exec("pm list packages")
+            val foundRemoteApps = KNOWN_REMOTE_CONTROL_PACKAGES.filter { pkg ->
+                installedPackages.contains("package:$pkg")
+            }
+            if (foundRemoteApps.isNotEmpty()) {
+                appendLog(
+                    "[!] Known remote-support/MDM-agent package(s) installed: " +
+                        "${foundRemoteApps.joinToString(", ")}. If you didn't install these " +
+                        "yourself, remove them before rooting."
+                )
+            }
+        } finally {
+            unbindExploitService(handle)
         }
     }
 
@@ -636,5 +701,29 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         private const val REBOOT_COMMAND =
             "sync; if svc power reboot || reboot; then " +
                     "echo UNROOT_REBOOT_REQUESTED; else echo UNROOT_FAIL:reboot:${'$'}?; fi"
+
+        // Non-exhaustive on purpose: a hit here is a prompt to double-check the app is one
+        // you actually intend to have installed, not proof of a problem — legitimate
+        // remote-support tools and legitimate MDM enrollment both use these packages, so
+        // this list only warns (see runPreflightSafetyCheck), it never blocks rooting.
+        // Keep this in sync with scripts/preflight-check.sh's KNOWN_REMOTE_PKGS.
+        private val KNOWN_REMOTE_CONTROL_PACKAGES = listOf(
+            "com.teamviewer.host",
+            "com.teamviewer.quicksupport.market",
+            "com.teamviewer.quicksupport.addon",
+            "com.anydesk.anydeskandroid",
+            "com.sand.airdroid",
+            "com.sand.airmirror",
+            "com.rsupport.mobizen.mvagent",
+            "com.splashtop.remote.pad.v2",
+            "com.splashtop.streamer",
+            "com.remotepc.android",
+            "com.google.android.apps.work.clouddpc",
+            "com.airwatch.androidagent",
+            "com.microsoft.windowsintune.companyportal",
+            "com.citrix.CitrixReceiver",
+            "com.mobileiron.compliance.android",
+            "com.afwsamples.testdpc",
+        )
     }
 }
