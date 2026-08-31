@@ -348,41 +348,57 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // --- Pre-root safety: don't hand root to an existing remote controller ---
+    // --- Pre-root safety: don't hand root to someone other than the person holding the device ---
     //
-    // If the device already has a remote-control channel active (an MDM/enterprise
-    // Device Policy Controller, a Device Owner, a Profile Owner, or some other active
-    // Device Admin app), granting root hands that remote party root-level leverage too —
-    // not just the device's owner. This only detects and refuses; it never tries to
-    // remove or disable anything itself. Mirrors scripts/preflight-check.sh, which runs
-    // the same checks standalone via `rish` before the app is even opened.
+    // Root My Pixel is for a device's owner, physically holding it, rooting their own
+    // phone — that person never needs, and shouldn't need, any Device Admin/Owner status
+    // themselves; that concept is irrelevant to normal use. The one thing worth blocking
+    // on is a Device Owner: full, whole-device MDM/enterprise control provisioned through
+    // a deliberate enrollment flow, meaning someone other than whoever is holding the
+    // phone right now administers it. Rooting would hand that remote party root too.
+    //
+    // A generic active Device Admin component or a work-profile Profile Owner is a much
+    // weaker, noisier signal — Find My Device and plenty of ordinary consumer apps
+    // register as device admins on completely normal, fully-owned personal phones, and a
+    // work profile only manages its own sandboxed profile, not the whole device. Neither
+    // implies someone else controls the device the way a Device Owner does, so neither
+    // blocks — they're surfaced as warnings to review, same as the other checks below.
+    // This only detects and refuses; it never tries to remove or disable anything itself.
+    // Mirrors scripts/preflight-check.sh, which runs the same checks standalone via
+    // `rish` before the app is even opened.
 
     private suspend fun runPreflightSafetyCheck() {
-        appendLog("[*] Checking for an existing remote controller (Device Admin/MDM)...")
+        appendLog("[*] Checking for an existing remote controller (Device Owner/MDM)...")
         val handle = bindExploitService()
             ?: throw IllegalStateException("Failed to bind Shizuku UserService for preflight checks")
         try {
             val devicePolicyDump = handle.service.exec("dumpsys device_policy")
-            val blockers = mutableListOf<String>()
 
-            if (Regex("device owner:", RegexOption.IGNORE_CASE).containsMatchIn(devicePolicyDump)) {
-                blockers += "a Device Owner is configured"
+            require(
+                !Regex("device owner:", RegexOption.IGNORE_CASE).containsMatchIn(devicePolicyDump)
+            ) {
+                app.getString(R.string.error_remote_controller_blocking)
             }
+            appendLog("[+] No Device Owner found — this device isn't under remote/MDM control")
+
             if (Regex("profile owner", RegexOption.IGNORE_CASE).containsMatchIn(devicePolicyDump)) {
-                blockers += "a Profile Owner (work profile) is configured"
+                appendLog(
+                    "[!] A Profile Owner (work profile) is configured. This only manages its " +
+                        "own sandboxed profile, not the whole device, so it doesn't block " +
+                        "rooting — but review it if you don't recognize it."
+                )
             }
             val adminComponents = Regex("admin=ComponentInfo\\{[^}]+\\}")
                 .findAll(devicePolicyDump)
                 .map { it.value }
                 .toSet()
             if (adminComponents.isNotEmpty()) {
-                blockers += "active Device Admin app(s): ${adminComponents.joinToString(", ")}"
+                appendLog(
+                    "[!] Active Device Admin app(s) found: ${adminComponents.joinToString(", ")}. " +
+                        "This is common and often benign (e.g. Find My Device) and doesn't block " +
+                        "rooting — review it if you don't recognize it."
+                )
             }
-
-            require(blockers.isEmpty()) {
-                app.getString(R.string.error_remote_controller_blocking, blockers.joinToString("; "))
-            }
-            appendLog("[+] No Device Owner, Profile Owner, or active Device Admin app found")
 
             val adbWifi = handle.service.exec("settings get global adb_wifi_enabled")
                 .lineSequence().firstOrNull()?.trim().orEmpty()

@@ -96,7 +96,7 @@
     <string name="error_ksu_stage">Failed to stage ksud: %1$s</string>
     <string name="error_ksu_verify">ReSukiSU loader failed (%1$d): %2$s</string>
     <string name="error_shizuku_required">Shizuku is required. Install Shizuku from Google Play and grant permissions to Root My Pixel.</string>
-    <string name="error_remote_controller_blocking">Rooting blocked — this device already has a remote controller active: %1$s. Remove it (Settings ▸ Security ▸ Device admin apps, or the MDM app\'s own removal flow / a factory reset for a Device Owner) before rooting — otherwise root would be reachable by whoever controls that admin.</string>
+    <string name="error_remote_controller_blocking">Rooting blocked — a Device Owner is configured on this device, meaning someone other than whoever is holding it right now administers it (e.g. an MDM/enterprise Device Policy Controller). Remove it (the MDM app\'s own removal flow, or a factory reset) before rooting — otherwise root would be reachable by whoever controls that Device Owner.</string>
     <string name="error_boot_id">Cannot read boot ID</string>
     <string name="error_receipt">Cannot persist install receipt</string>
 
