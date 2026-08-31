@@ -108,6 +108,56 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ---
 
+## Building On-Device in Termux (ARM64 Pixel, No PC)
+
+The "Build Requirements" above ("macOS arm64/x86_64 or Linux x86_64 host") describe every machine Google ships official Android build binaries for. **A Pixel running Termux is Linux *aarch64*, which isn't on that list** — `build-all.sh` run unmodified inside Termux will get past the NDK-detection check and then fail deep into the build with an "Exec format error," because both the **NDK's prebuilt `clang`** and the **Android SDK's `aapt2`/`d8`/`aidl`** binaries are x86_64-only (or Darwin-only) executables that the ARM64 Android kernel simply can't run. Knowing that up front, before you sink an hour into `./build-all.sh` on-device, saves the debugging cycle — the failure isn't a bug in this repo, it's a gap in Termux/Pixel's compatibility with Google's own tooling. Note `build-all.sh` now fails immediately with a pointer to this section instead of running into that dead end blind (see below).
+
+There are two workable paths, in order of effort vs. purity:
+
+### Path A — Native ARM64 (fast, no emulation)
+
+Use Termux's own trusted, ARM64-native `clang`, and swap in ARM64 builds of the SDK's packaging tools.
+
+1. `pkg update && pkg install openjdk-21 gradle git clang` — check `pkg search aapt2 d8 aidl` for Termux-packaged ARM64 builds of those three; if your Termux repo doesn't carry them, use a community ARM64 drop-in such as [commit451's android-arm-build-tools](https://android-arm-build-tools.commit451.com/).
+2. Download the **official** Android NDK zip (the linux-x86_64 build is fine — you're not going to execute its `clang`, only reuse its data) and unpack it somewhere, e.g. `~/ndk/`. You only need the **sysroot** — the headers and precompiled `bionic`/`libc++` libraries under `toolchains/llvm/prebuilt/linux-x86_64/sysroot/` are architecture-independent data, not host-arch binaries, so they work regardless of which machine unpacked them.
+3. Compile with Termux's own `clang`, pointed at that sysroot, instead of the NDK's `clang`:
+   ```bash
+   clang --target=aarch64-linux-android35 \
+     --sysroot=~/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot \
+     -fPIE -pie -O2 -Wall -Wextra \
+     Root-My-Pixel-Payloads/src/su_daemon.c -ldl \
+     -o app/src/main/jniLibs/arm64-v8a/libcve43499root.so
+   ```
+   (This replaces `build-all.sh` Step 1; the same substitution applies to `make -C Root-My-Pixel-Payloads` if you're also rebuilding an exploit payload — pass this `clang`+`--sysroot` combination through `CC`.)
+4. For the `./gradlew assembleDebug` step, tell Gradle to use an ARM64 `aapt2` instead of the x86_64 one it would otherwise fetch from Maven (AGP 9+): add to `gradle.properties`
+   ```properties
+   android.aapt2FromMavenOverride=/data/data/com.termux/files/usr/bin/aapt2
+   ```
+   pointing at wherever your ARM64 `aapt2` actually landed, and restart the Gradle daemon (`./gradlew --stop`) after changing it.
+
+### Path B — Emulated x86_64 (slower, closer to "official")
+
+Run Google's real, unmodified SDK/NDK binaries under x86_64 emulation instead of substituting anything:
+
+```bash
+pkg install proot-distro
+proot-distro install ubuntu
+proot-distro login ubuntu
+# inside the Ubuntu chroot:
+apt update && apt install -y box64 openjdk-21-jdk unzip
+# install the real Android cmdline-tools + NDK as you would on any x86_64 Linux box, then:
+box64 ./gradlew assembleDebug
+```
+Compiles run noticeably slower under emulation, but every tool that executes is Google's own binary, unmodified — the strongest trust story of the two paths.
+
+### Why this matters more than usual here
+
+We just audited this repo and removed an unreferenced, unverifiable exploit binary that had been silently committed (see git history around `grizzly-CD1A.260618.001.C2.so`). Compiling a local-privilege-escalation payload is exactly the kind of build where the *provenance of your compiler* matters — don't grab a random precompiled "termux-ndk-aarch64" binary off GitHub to sidestep this. Path A only ever runs Termux's own package-manager-installed `clang` against Google's unmodified sysroot *data*; Path B runs Google's unmodified NDK/SDK binaries directly, just emulated. Either keeps every executable in the chain traceable back to a source you can verify; a stranger's rebuilt toolchain binary doesn't.
+
+**Caveat:** this section describes the current (2026) community-documented workarounds for building Android apps in Termux on ARM64 — exact package names and NDK layout can drift between Termux/AGP/NDK releases, and it hasn't been exercised end-to-end against this specific project's build (Compose + Koin + CMake) in a live Termux session. Treat it as a verified starting point, not a guarantee; if a step doesn't match what you see, that's the drift, not user error.
+
+---
+
 ## Credits
 
 - Exploit: [NebuSec IonStack](https://github.com/NebuSec/CyberMeowfia)

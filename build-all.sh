@@ -34,13 +34,31 @@ if [ -z "${ANDROID_NDK_HOME:-}" ]; then
 fi
 echo "[*] Using NDK: $ANDROID_NDK_HOME"
 
-# ── NDK compiler path (macOS host) ───────────────────────────
-if [[ "$(uname -s)" == "Darwin" ]]; then
+# ── NDK compiler path ─────────────────────────────────────────
+# Google only ships prebuilt NDK host toolchains for macOS and linux-x86_64.
+# There is no official linux-aarch64 (Termux/on-device Pixel) build, so fail
+# fast with a pointer instead of hitting an "Exec format error" mid-build.
+HOST_OS="$(uname -s)"
+HOST_ARCH="$(uname -m)"
+if [[ "$HOST_OS" == "Darwin" ]]; then
   HOST_PLATFORM="darwin-x86_64"
-else
+elif [[ "$HOST_OS" == "Linux" && "$HOST_ARCH" == "x86_64" ]]; then
   HOST_PLATFORM="linux-x86_64"
+else
+  echo "ERROR: Unsupported build host: $HOST_OS/$HOST_ARCH"
+  echo "Google's Android NDK only ships prebuilt clang for macOS and Linux x86_64."
+  echo "If you're building on-device on a Pixel in Termux (Linux/aarch64), see"
+  echo "the 'Building On-Device in Termux (ARM64 Pixel, No PC)' section in"
+  echo "README.md for the two supported workarounds before retrying."
+  exit 1
 fi
 CC="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$HOST_PLATFORM/bin/aarch64-linux-android35-clang"
+if ! "$CC" --version >/dev/null 2>&1; then
+  echo "ERROR: NDK compiler at $CC did not run (architecture/emulation mismatch?)."
+  echo "See the 'Building On-Device in Termux (ARM64 Pixel, No PC)' section in"
+  echo "README.md."
+  exit 1
+fi
 
 # ── Supported devices targets ─────────────────────────────────
 TARGETS=(
