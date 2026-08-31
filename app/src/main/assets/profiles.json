@@ -49,6 +49,14 @@
       "kmi": "android14-6.1"
     },
     {
+      "profileId": "panther-BP2A.250705.008",
+      "codename": "panther",
+      "kernelRelease": "6.1.124-android14-11",
+      "buildDisplay": "BP2A.250705.008",
+      "exploitAsset": "exploits/panther-BP2A.250705.008.so",
+      "kmi": "android14-6.1"
+    },
+    {
       "profileId": "husky-CP2A.260705.006",
       "codename": "husky",
       "kernelRelease": "6.1.157-android14-11",
