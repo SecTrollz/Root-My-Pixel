@@ -213,7 +213,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val logFile = File(app.filesDir, "exploit.log")
         if (!logFile.exists()) return
 
-        val uri = FileProvider.getUriForFile(app, "${app.packageName}.provider", logFile)
+        val sanitizedLog = runCatching {
+            logFile.readText().sanitizeLog()
+        }.getOrElse {
+            "[ERROR: Could not read log file: ${it.message}]"
+        }
+
+        val tempLogFile = File(app.cacheDir, "exploit_sanitized.log")
+        tempLogFile.writeText(sanitizedLog)
+
+        val uri = FileProvider.getUriForFile(app, "${app.packageName}.provider", tempLogFile)
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_STREAM, uri)
@@ -224,6 +233,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         app.startActivity(chooserIntent)
+    }
+
+    private fun String.sanitizeLog(): String {
+        val sanitized = this
+            .replace(Regex("""/data/data/\S+"""), "/data/data/[APP_PACKAGE]")
+            .replace(Regex("""/data/user/\S+"""), "/data/user/[APP_PACKAGE]")
+            .replace(Regex("""/cache/\S+"""), "/cache/[CACHE_DIR]")
+            .replace(Regex("""/storage/emulated/\d+/[A-Za-z0-9.\-_/]*"""), "/storage/[USER_STORAGE]")
+            .replace(Regex("""ro\.serialno=[A-Za-z0-9]+"""), "ro.serialno=[REDACTED]")
+            .replace(Regex("""ro\.boot\.serialno=[A-Za-z0-9]+"""), "ro.boot.serialno=[REDACTED]")
+
+        return sanitized
     }
 
     private data class ShizukuServiceHandle(
