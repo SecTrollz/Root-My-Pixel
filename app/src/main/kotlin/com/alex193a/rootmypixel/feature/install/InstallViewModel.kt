@@ -56,6 +56,8 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     private val mutableTargetCatalog = MutableStateFlow(TargetCatalogUiState())
     private var discoveryJob: Job? = null
     private var installJob: Job? = null
+    private var isInstalling = false
+    private var watchdogJob: Job? = null
 
     val state: StateFlow<InstallUiState> = mutableState.asStateFlow()
     val targetCatalog: StateFlow<TargetCatalogUiState> = mutableTargetCatalog.asStateFlow()
@@ -128,6 +130,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         discoveryJob?.cancel()
 
         installJob = viewModelScope.launch(Dispatchers.IO) {
+            isInstalling = true
             mutableState.value = InstallUiState(
                 phase = InstallPhase.Checking,
                 probeOutput = mutableState.value.probeOutput,
@@ -211,6 +214,9 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 if (error is CancellationException) throw error
                 appendLog("[-] ${error.message ?: error.javaClass.simpleName}")
                 setPhase(InstallPhase.Failed, app.getString(R.string.status_install_failed))
+            } finally {
+                isInstalling = false
+                watchdogJob?.cancel()
             }
         }
     }
@@ -272,11 +278,49 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         Shizuku.unbindUserService(args, handle.conn, true)
     }
 
+    // --- System Stability & Crash Prevention ---
+
+    private suspend fun testRootStability(helper: File): Boolean {
+        appendLog("[*] Testing root transport stability...")
+        for (attempt in 1..3) {
+            val result = runHelper(helper, "-c", "id -u")
+            if (result.code == 0 && result.output.trim() == "0") {
+                appendLog("[+] Root verified (attempt $attempt): uid=0")
+                return true
+            }
+            appendLog("[!] Root test failed (attempt $attempt): code=${result.code} output=${result.output.take(50)}")
+            delay(500)
+        }
+        return false
+    }
+
+    private suspend fun checkSystemHealth(helper: File): Boolean {
+        val result = runHelper(helper, "-c", "echo heartbeat")
+        return result.code == 0 && result.output.contains("heartbeat")
+    }
+
+    private fun startWatchdog(timeout: Long = 30_000) {
+        watchdogJob?.cancel()
+        watchdogJob = viewModelScope.launch(Dispatchers.Default) {
+            delay(timeout)
+            if (isInstalling) {
+                appendLog("[-] WATCHDOG: System unresponsive for ${timeout / 1000}s, aborting")
+                isInstalling = false
+                setPhase(InstallPhase.Failed, "System became unresponsive (crash prevented)")
+            }
+        }
+    }
+
     // --- Exploit execution ---
 
     private suspend fun executeExploit(payloads: VerifiedPayloads) {
         executeExploitViaShizuku(payloads)
         appendLog(app.getString(R.string.log_bootstrap_root))
+
+        val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
+        if (!testRootStability(helper)) {
+            throw IllegalStateException("Exploit succeeded but root transport is unstable")
+        }
     }
 
     private suspend fun executeExploitViaShizuku(payloads: VerifiedPayloads) {
@@ -409,9 +453,12 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         val ksudDest = "/data/local/tmp/ksud-pixel"
         val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
 
-        // 1. Wait for daemon to be ready
-        awaitDaemonSocket()
-        diagnoseDaemon()
+        startWatchdog(60_000)
+
+        try {
+            // 1. Wait for daemon to be ready
+            awaitDaemonSocket()
+            diagnoseDaemon()
 
         // 2. Stage ksud via daemon root (cp + chmod + chown)
         appendLog("[*] Staging ReSukiSU binary...")
@@ -458,15 +505,18 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 break
             }
             Thread.sleep(500)
+            }
+            require(ksuActive) {
+                app.getString(
+                    R.string.error_ksu_verify,
+                    lateResult.code,
+                    lateResult.output.take(200)
+                )
+            }
+            appendLog(app.getString(R.string.log_ksu_control_verified))
+        } finally {
+            watchdogJob?.cancel()
         }
-        require(ksuActive) {
-            app.getString(
-                R.string.error_ksu_verify,
-                lateResult.code,
-                lateResult.output.take(200)
-            )
-        }
-        appendLog(app.getString(R.string.log_ksu_control_verified))
     }
 
     private fun runHelper(helper: File, vararg arguments: String): CommandResult {
@@ -645,6 +695,10 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun softReboot() {
+        if (isInstalling) {
+            appendLog("[-] Cannot soft reboot during installation (crash prevention)")
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
             if (!helper.exists()) return@launch
