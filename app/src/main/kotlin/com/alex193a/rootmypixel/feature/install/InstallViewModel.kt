@@ -453,6 +453,10 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         val ksudDest = "/data/local/tmp/ksud-pixel"
         val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
 
+        // Validate paths contain no shell metacharacters (command injection prevention)
+        validateShellPath(ksudSource)
+        validateShellPath(ksudDest)
+
         startWatchdog(60_000)
 
         try {
@@ -705,6 +709,14 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             val result = runHelper(helper, "-c",
                 "killall -9 system_server 2>/dev/null; true")
             appendLog("[*] Soft reboot triggered (exit ${result.code})")
+        }
+    }
+
+    // --- Path Validation (Command Injection Prevention) ---
+
+    private fun validateShellPath(path: String) {
+        require(!path.contains(Regex("[;|&\$`\"'\\\\]"))) {
+            "Path contains shell metacharacters and is unsafe: $path"
         }
     }
 
