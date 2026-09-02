@@ -22,6 +22,7 @@ import com.alex193a.rootmypixel.domain.usecase.ResolveTargetUseCase
 import com.alex193a.rootmypixel.feature.install.InstallActivity
 import com.alex193a.rootmypixel.shizuku.ExploitService
 import com.alex193a.rootmypixel.shizuku.IExploitService
+import com.alex193a.rootmypixel.utils.HmacValidator
 import com.alex193a.rootmypixel.utils.NativeProbe
 import com.alex193a.rootmypixel.utils.UnrootCommandOutcome
 import com.alex193a.rootmypixel.utils.UnrootIssue
@@ -297,6 +298,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }.getOrElse {
                 showUnrootWarning(listOf(UnrootIssue.Unknown))
                 return@launch
+            }
+
+            val expectedHmac = runCatching {
+                app.assets.open("unroot.sh.hmac256").bufferedReader().use { it.readText() }
+            }.getOrElse {
+                appendUnrootLog("[-] Unroot script signature not found; skipping verification")
+                ""
+            }
+
+            if (expectedHmac.isNotBlank() && !HmacValidator.validateHmac(script, expectedHmac)) {
+                appendUnrootLog("[-] CRITICAL: Unroot script signature validation failed")
+                appendUnrootLog("[-] The script may have been tampered with; aborting for safety")
+                showUnrootWarning(listOf(UnrootIssue.Unknown))
+                return@launch
+            }
+
+            if (expectedHmac.isNotBlank()) {
+                appendUnrootLog("[+] Unroot script signature validated")
             }
 
             val outcome = executeUnrootScript(script)
