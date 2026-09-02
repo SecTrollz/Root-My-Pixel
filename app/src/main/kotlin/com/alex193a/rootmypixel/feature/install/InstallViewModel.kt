@@ -424,11 +424,11 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             val adbWifi = handle.service.exec("settings get global adb_wifi_enabled")
                 .lineSequence().firstOrNull()?.trim().orEmpty()
             if (adbWifi == "1") {
-                appendLog(
-                    "[!] Wireless debugging is currently ON. If you only enabled it to pair " +
-                        "Shizuku, turn it back off (Settings > Developer options > Wireless " +
-                        "debugging) once you're done — leaving it on is a standing " +
-                        "local-network attack surface."
+                throw IllegalStateException(
+                    "Wireless debugging must be turned OFF before rooting. " +
+                    "Enable it only to pair Shizuku, then disable it immediately. " +
+                    "Leaving it on creates a local-network attack surface. " +
+                    "Settings > Developer options > Wireless debugging"
                 )
             }
 
