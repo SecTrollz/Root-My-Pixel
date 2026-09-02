@@ -9,6 +9,8 @@ data class InstallUiState(
     val canUnrootCurrentSession: Boolean = false,
     /** Non-null while unroot is paused waiting for an explicit reboot decision. */
     val unrootWarning: UnrootWarningUi? = null,
+    /** True while exploit is running and can be forcefully killed by user. */
+    val canKillExploit: Boolean = false,
 ) {
     val busy: Boolean
         get() = phase in setOf(

@@ -58,6 +58,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     private var installJob: Job? = null
     private var isInstalling = false
     private var watchdogJob: Job? = null
+    private var exploitServiceHandle: ShizukuServiceHandle? = null
 
     val state: StateFlow<InstallUiState> = mutableState.asStateFlow()
     val targetCatalog: StateFlow<TargetCatalogUiState> = mutableTargetCatalog.asStateFlow()
@@ -329,6 +330,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
 
         val handle = bindExploitService()
             ?: throw IllegalStateException("Failed to bind Shizuku UserService")
+        exploitServiceHandle = handle
 
         try {
             val logPrefix = mutableState.value.log
@@ -375,6 +377,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 app.getString(R.string.error_success_marker)
             }
         } finally {
+            exploitServiceHandle = null
             unbindExploitService(handle)
         }
     }
@@ -712,6 +715,21 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun killExploit() {
+        val handle = exploitServiceHandle
+        if (handle == null) {
+            appendLog("[-] No running exploit to kill")
+            return
+        }
+        try {
+            handle.service.kill()
+            appendLog("[*] Kill signal sent to exploit process")
+            mutableState.value = mutableState.value.copy(canKillExploit = false)
+        } catch (e: Exception) {
+            appendLog("[-] Failed to kill exploit: ${e.message}")
+        }
+    }
+
     // --- Path Validation (Command Injection Prevention) ---
 
     private fun validateShellPath(path: String) {
@@ -723,7 +741,12 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     // --- UI helpers ---
 
     private fun setPhase(phase: InstallPhase, message: String) {
-        mutableState.value = mutableState.value.copy(phase = phase, message = message)
+        val canKill = phase in setOf(InstallPhase.Exploiting, InstallPhase.LoadingKernelSu)
+        mutableState.value = mutableState.value.copy(
+            phase = phase,
+            message = message,
+            canKillExploit = canKill,
+        )
         appendLog("[*] $message")
     }
 
