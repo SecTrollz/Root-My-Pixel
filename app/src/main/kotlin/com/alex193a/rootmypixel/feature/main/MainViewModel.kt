@@ -495,10 +495,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
+        // Request code for Shizuku permission request. Used in permission callback handling.
+        // Can be any unique value; 101 is arbitrary but consistent.
         private const val SHIZUKU_PERMISSION_CODE = 101
-        private const val UPTIME_THRESHOLD_MS = 5 * 60 * 1000L // 5 minutes
+
+        // Device uptime threshold (5 minutes) for detecting problematic reboots.
+        // If uptime < 5 min when app starts, a very recent reboot is likely exploit-related.
+        private const val UPTIME_THRESHOLD_MS = 5 * 60 * 1000L
+
+        // Timeout for individual helper binary commands during unroot (90 seconds).
+        // Guards against commands that hang or deadlock in the cleanup flow.
         private const val COMMAND_TIMEOUT_SECONDS = 90L
+
+        // Exit code returned when a command times out (124 matches GNU timeout behavior).
+        // Allows unroot logic to distinguish "command failed" from "command hung".
         private const val COMMAND_TIMEOUT_CODE = 124
+
+        // Command to request device reboot during unroot. Uses `sync` to flush buffers
+        // first, then tries svc power reboot (Android) or reboot (shell fallback).
+        // Markers (UNROOT_REBOOT_REQUESTED) are parsed by UI.
         private const val REBOOT_COMMAND =
             "sync; if svc power reboot || reboot; then " +
                     "echo UNROOT_REBOOT_REQUESTED; else echo UNROOT_FAIL:reboot:${'$'}?; fi"

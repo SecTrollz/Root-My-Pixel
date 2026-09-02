@@ -772,12 +772,33 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     data class CommandResult(val code: Int, val output: String)
 
     companion object {
+        // Maximum time (10 minutes) without progress before exploit is considered stalled.
+        // If exploit log hasn't changed within this window, the watchdog aborts.
         private const val EXPLOIT_STALL_MILLIS = 600_000L
+
+        // Absolute timeout (30 minutes) for entire exploit execution.
+        // Guards against exploits that hang indefinitely despite appearing active.
         private const val EXPLOIT_TOTAL_MILLIS = 1_800_000L
+
+        // Maximum log size (5 MB) to keep in memory. Older lines are trimmed.
+        // Prevents unbounded memory growth from verbose exploit logging.
         private const val MAX_LOG_CHARS = 5 * 1024 * 1024
+
+        // Timeout for individual helper binary commands (90 seconds).
+        // Covers commands like runHelper() that may do I/O or wait for daemon.
         private const val COMMAND_TIMEOUT_SECONDS = 90L
+
+        // Exit code returned when a command times out (124 matches GNU timeout behavior).
+        // Distinguishes "command failed" from "command hung and was killed".
         private const val COMMAND_TIMEOUT_CODE = 124
+
+        // Polling interval while exploit is running. Controls log update frequency in UI.
+        // Lower values = faster feedback; higher values = less CPU/IPC overhead.
         private val LOG_POLL_INTERVAL = 250.milliseconds
+
+        // Command to request device reboot during unroot. Uses `sync` to flush buffers
+        // first, then tries svc power reboot (Android) or reboot (shell fallback).
+        // Markers (UNROOT_REBOOT_REQUESTED) are parsed by UI.
         private const val REBOOT_COMMAND =
             "sync; if svc power reboot || reboot; then " +
                     "echo UNROOT_REBOOT_REQUESTED; else echo UNROOT_FAIL:reboot:${'$'}?; fi"
