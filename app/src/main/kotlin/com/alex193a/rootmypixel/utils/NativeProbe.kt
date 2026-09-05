@@ -92,32 +92,37 @@ object NativeProbe {
         val release = if (versionParts.size >= 3) versionParts[2] else kernelRelease
 
         val buildDisplay = android.os.Build.DISPLAY.takeIf { it.isNotBlank() } ?: runCatching {
-            Runtime.getRuntime().exec(arrayOf("getprop", "ro.build.display.id"))
-                .inputStream.bufferedReader().readText().trim()
+            Runtime.getRuntime().exec(arrayOf("getprop", "ro.build.display.id")).use { process ->
+                process.inputStream.bufferedReader().use { it.readText().trim() }
+            }
         }.getOrDefault("")
 
         val model = android.os.Build.MODEL.takeIf { it.isNotBlank() } ?: runCatching {
-            Runtime.getRuntime().exec(arrayOf("getprop", "ro.product.model"))
-                .inputStream.bufferedReader().readText().trim()
+            Runtime.getRuntime().exec(arrayOf("getprop", "ro.product.model")).use { process ->
+                process.inputStream.bufferedReader().use { it.readText().trim() }
+            }
         }.getOrDefault("")
 
         val device = android.os.Build.DEVICE.takeIf { it.isNotBlank() } ?: runCatching {
-            Runtime.getRuntime().exec(arrayOf("getprop", "ro.product.device"))
-                .inputStream.bufferedReader().readText().trim()
+            Runtime.getRuntime().exec(arrayOf("getprop", "ro.product.device")).use { process ->
+                process.inputStream.bufferedReader().use { it.readText().trim() }
+            }
         }.getOrDefault("")
 
         val sdkVersion = if (android.os.Build.VERSION.SDK_INT > 0) {
             android.os.Build.VERSION.SDK_INT
         } else {
             runCatching {
-                Runtime.getRuntime().exec(arrayOf("getprop", "ro.build.version.sdk"))
-                    .inputStream.bufferedReader().readText().trim().toInt()
+                Runtime.getRuntime().exec(arrayOf("getprop", "ro.build.version.sdk")).use { process ->
+                    process.inputStream.bufferedReader().use { it.readText().trim().toInt() }
+                }
             }.getOrDefault(0)
         }
 
         val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: runCatching {
-            Runtime.getRuntime().exec(arrayOf("getprop", "ro.product.cpu.abi"))
-                .inputStream.bufferedReader().readText().trim()
+            Runtime.getRuntime().exec(arrayOf("getprop", "ro.product.cpu.abi")).use { process ->
+                process.inputStream.bufferedReader().use { it.readText().trim() }
+            }
         }.getOrDefault("arm64-v8a")
 
         val pageSize = runCatching {

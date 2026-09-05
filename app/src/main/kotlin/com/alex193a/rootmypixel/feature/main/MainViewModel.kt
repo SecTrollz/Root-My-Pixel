@@ -22,6 +22,7 @@ import com.alex193a.rootmypixel.domain.usecase.ResolveTargetUseCase
 import com.alex193a.rootmypixel.feature.install.InstallActivity
 import com.alex193a.rootmypixel.shizuku.ExploitService
 import com.alex193a.rootmypixel.shizuku.IExploitService
+import com.alex193a.rootmypixel.utils.HmacValidator
 import com.alex193a.rootmypixel.utils.NativeProbe
 import com.alex193a.rootmypixel.utils.UnrootCommandOutcome
 import com.alex193a.rootmypixel.utils.UnrootIssue
@@ -212,7 +213,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val logFile = File(app.filesDir, "exploit.log")
         if (!logFile.exists()) return
 
-        val uri = FileProvider.getUriForFile(app, "${app.packageName}.provider", logFile)
+        val sanitizedLog = runCatching {
+            logFile.readText().sanitizeLog()
+        }.getOrElse {
+            "[ERROR: Could not read log file: ${it.message}]"
+        }
+
+        val tempLogFile = File(app.cacheDir, "exploit_sanitized.log")
+        tempLogFile.writeText(sanitizedLog)
+
+        val uri = FileProvider.getUriForFile(app, "${app.packageName}.provider", tempLogFile)
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_STREAM, uri)
@@ -223,6 +233,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         app.startActivity(chooserIntent)
+    }
+
+    private fun String.sanitizeLog(): String {
+        val sanitized = this
+            .replace(Regex("""/data/data/\S+"""), "/data/data/[APP_PACKAGE]")
+            .replace(Regex("""/data/user/\S+"""), "/data/user/[APP_PACKAGE]")
+            .replace(Regex("""/cache/\S+"""), "/cache/[CACHE_DIR]")
+            .replace(Regex("""/storage/emulated/\d+/[A-Za-z0-9.\-_/]*"""), "/storage/[USER_STORAGE]")
+            .replace(Regex("""ro\.serialno=[A-Za-z0-9]+"""), "ro.serialno=[REDACTED]")
+            .replace(Regex("""ro\.boot\.serialno=[A-Za-z0-9]+"""), "ro.boot.serialno=[REDACTED]")
+
+        return sanitized
     }
 
     private data class ShizukuServiceHandle(
@@ -297,6 +319,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }.getOrElse {
                 showUnrootWarning(listOf(UnrootIssue.Unknown))
                 return@launch
+            }
+
+            val expectedHmac = runCatching {
+                app.assets.open("unroot.sh.hmac256").bufferedReader().use { it.readText() }
+            }.getOrElse {
+                appendUnrootLog("[-] Unroot script signature not found; skipping verification")
+                ""
+            }
+
+            if (expectedHmac.isNotBlank() && !HmacValidator.validateHmac(script, expectedHmac)) {
+                appendUnrootLog("[-] CRITICAL: Unroot script signature validation failed")
+                appendUnrootLog("[-] The script may have been tampered with; aborting for safety")
+                showUnrootWarning(listOf(UnrootIssue.Unknown))
+                return@launch
+            }
+
+            if (expectedHmac.isNotBlank()) {
+                appendUnrootLog("[+] Unroot script signature validated")
             }
 
             val outcome = executeUnrootScript(script)
@@ -455,10 +495,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
+        // Request code for Shizuku permission request. Used in permission callback handling.
+        // Can be any unique value; 101 is arbitrary but consistent.
         private const val SHIZUKU_PERMISSION_CODE = 101
-        private const val UPTIME_THRESHOLD_MS = 5 * 60 * 1000L // 5 minutes
+
+        // Device uptime threshold (5 minutes) for detecting problematic reboots.
+        // If uptime < 5 min when app starts, a very recent reboot is likely exploit-related.
+        private const val UPTIME_THRESHOLD_MS = 5 * 60 * 1000L
+
+        // Timeout for individual helper binary commands during unroot (90 seconds).
+        // Guards against commands that hang or deadlock in the cleanup flow.
         private const val COMMAND_TIMEOUT_SECONDS = 90L
+
+        // Exit code returned when a command times out (124 matches GNU timeout behavior).
+        // Allows unroot logic to distinguish "command failed" from "command hung".
         private const val COMMAND_TIMEOUT_CODE = 124
+
+        // Command to request device reboot during unroot. Uses `sync` to flush buffers
+        // first, then tries svc power reboot (Android) or reboot (shell fallback).
+        // Markers (UNROOT_REBOOT_REQUESTED) are parsed by UI.
         private const val REBOOT_COMMAND =
             "sync; if svc power reboot || reboot; then " +
                     "echo UNROOT_REBOOT_REQUESTED; else echo UNROOT_FAIL:reboot:${'$'}?; fi"

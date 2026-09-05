@@ -56,6 +56,9 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     private val mutableTargetCatalog = MutableStateFlow(TargetCatalogUiState())
     private var discoveryJob: Job? = null
     private var installJob: Job? = null
+    private var isInstalling = false
+    private var watchdogJob: Job? = null
+    private var exploitServiceHandle: ShizukuServiceHandle? = null
 
     val state: StateFlow<InstallUiState> = mutableState.asStateFlow()
     val targetCatalog: StateFlow<TargetCatalogUiState> = mutableTargetCatalog.asStateFlow()
@@ -128,6 +131,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         discoveryJob?.cancel()
 
         installJob = viewModelScope.launch(Dispatchers.IO) {
+            isInstalling = true
             mutableState.value = InstallUiState(
                 phase = InstallPhase.Checking,
                 probeOutput = mutableState.value.probeOutput,
@@ -211,6 +215,9 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 if (error is CancellationException) throw error
                 appendLog("[-] ${error.message ?: error.javaClass.simpleName}")
                 setPhase(InstallPhase.Failed, app.getString(R.string.status_install_failed))
+            } finally {
+                isInstalling = false
+                watchdogJob?.cancel()
             }
         }
     }
@@ -272,11 +279,49 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         Shizuku.unbindUserService(args, handle.conn, true)
     }
 
+    // --- System Stability & Crash Prevention ---
+
+    private suspend fun testRootStability(helper: File): Boolean {
+        appendLog("[*] Testing root transport stability...")
+        for (attempt in 1..3) {
+            val result = runHelper(helper, "-c", "id -u")
+            if (result.code == 0 && result.output.trim() == "0") {
+                appendLog("[+] Root verified (attempt $attempt): uid=0")
+                return true
+            }
+            appendLog("[!] Root test failed (attempt $attempt): code=${result.code} output=${result.output.take(50)}")
+            delay(500)
+        }
+        return false
+    }
+
+    private suspend fun checkSystemHealth(helper: File): Boolean {
+        val result = runHelper(helper, "-c", "echo heartbeat")
+        return result.code == 0 && result.output.contains("heartbeat")
+    }
+
+    private fun startWatchdog(timeout: Long = 30_000) {
+        watchdogJob?.cancel()
+        watchdogJob = viewModelScope.launch(Dispatchers.Default) {
+            delay(timeout)
+            if (isInstalling) {
+                appendLog("[-] WATCHDOG: System unresponsive for ${timeout / 1000}s, aborting")
+                isInstalling = false
+                setPhase(InstallPhase.Failed, "System became unresponsive (crash prevented)")
+            }
+        }
+    }
+
     // --- Exploit execution ---
 
     private suspend fun executeExploit(payloads: VerifiedPayloads) {
         executeExploitViaShizuku(payloads)
         appendLog(app.getString(R.string.log_bootstrap_root))
+
+        val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
+        if (!testRootStability(helper)) {
+            throw IllegalStateException("Exploit succeeded but root transport is unstable")
+        }
     }
 
     private suspend fun executeExploitViaShizuku(payloads: VerifiedPayloads) {
@@ -285,6 +330,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
 
         val handle = bindExploitService()
             ?: throw IllegalStateException("Failed to bind Shizuku UserService")
+        exploitServiceHandle = handle
 
         try {
             val logPrefix = mutableState.value.log
@@ -331,6 +377,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 app.getString(R.string.error_success_marker)
             }
         } finally {
+            exploitServiceHandle = null
             unbindExploitService(handle)
         }
     }
@@ -377,11 +424,11 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             val adbWifi = handle.service.exec("settings get global adb_wifi_enabled")
                 .lineSequence().firstOrNull()?.trim().orEmpty()
             if (adbWifi == "1") {
-                appendLog(
-                    "[!] Wireless debugging is currently ON. If you only enabled it to pair " +
-                        "Shizuku, turn it back off (Settings > Developer options > Wireless " +
-                        "debugging) once you're done — leaving it on is a standing " +
-                        "local-network attack surface."
+                throw IllegalStateException(
+                    "Wireless debugging must be turned OFF before rooting. " +
+                    "Enable it only to pair Shizuku, then disable it immediately. " +
+                    "Leaving it on creates a local-network attack surface. " +
+                    "Settings > Developer options > Wireless debugging"
                 )
             }
 
@@ -409,9 +456,16 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         val ksudDest = "/data/local/tmp/ksud-pixel"
         val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
 
-        // 1. Wait for daemon to be ready
-        awaitDaemonSocket()
-        diagnoseDaemon()
+        // Validate paths contain no shell metacharacters (command injection prevention)
+        validateShellPath(ksudSource)
+        validateShellPath(ksudDest)
+
+        startWatchdog(60_000)
+
+        try {
+            // 1. Wait for daemon to be ready
+            awaitDaemonSocket()
+            diagnoseDaemon()
 
         // 2. Stage ksud via daemon root (cp + chmod + chown)
         appendLog("[*] Staging ReSukiSU binary...")
@@ -458,15 +512,18 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 break
             }
             Thread.sleep(500)
+            }
+            require(ksuActive) {
+                app.getString(
+                    R.string.error_ksu_verify,
+                    lateResult.code,
+                    lateResult.output.take(200)
+                )
+            }
+            appendLog(app.getString(R.string.log_ksu_control_verified))
+        } finally {
+            watchdogJob?.cancel()
         }
-        require(ksuActive) {
-            app.getString(
-                R.string.error_ksu_verify,
-                lateResult.code,
-                lateResult.output.take(200)
-            )
-        }
-        appendLog(app.getString(R.string.log_ksu_control_verified))
     }
 
     private fun runHelper(helper: File, vararg arguments: String): CommandResult {
@@ -645,6 +702,10 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun softReboot() {
+        if (isInstalling) {
+            appendLog("[-] Cannot soft reboot during installation (crash prevention)")
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             val helper = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
             if (!helper.exists()) return@launch
@@ -654,10 +715,38 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun killExploit() {
+        val handle = exploitServiceHandle
+        if (handle == null) {
+            appendLog("[-] No running exploit to kill")
+            return
+        }
+        try {
+            handle.service.kill()
+            appendLog("[*] Kill signal sent to exploit process")
+            mutableState.value = mutableState.value.copy(canKillExploit = false)
+        } catch (e: Exception) {
+            appendLog("[-] Failed to kill exploit: ${e.message}")
+        }
+    }
+
+    // --- Path Validation (Command Injection Prevention) ---
+
+    private fun validateShellPath(path: String) {
+        require(!path.contains(Regex("[;|&\$`\"'\\\\]"))) {
+            "Path contains shell metacharacters and is unsafe: $path"
+        }
+    }
+
     // --- UI helpers ---
 
     private fun setPhase(phase: InstallPhase, message: String) {
-        mutableState.value = mutableState.value.copy(phase = phase, message = message)
+        val canKill = phase in setOf(InstallPhase.Exploiting, InstallPhase.LoadingKernelSu)
+        mutableState.value = mutableState.value.copy(
+            phase = phase,
+            message = message,
+            canKillExploit = canKill,
+        )
         appendLog("[*] $message")
     }
 
@@ -683,12 +772,33 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     data class CommandResult(val code: Int, val output: String)
 
     companion object {
+        // Maximum time (10 minutes) without progress before exploit is considered stalled.
+        // If exploit log hasn't changed within this window, the watchdog aborts.
         private const val EXPLOIT_STALL_MILLIS = 600_000L
+
+        // Absolute timeout (30 minutes) for entire exploit execution.
+        // Guards against exploits that hang indefinitely despite appearing active.
         private const val EXPLOIT_TOTAL_MILLIS = 1_800_000L
+
+        // Maximum log size (5 MB) to keep in memory. Older lines are trimmed.
+        // Prevents unbounded memory growth from verbose exploit logging.
         private const val MAX_LOG_CHARS = 5 * 1024 * 1024
+
+        // Timeout for individual helper binary commands (90 seconds).
+        // Covers commands like runHelper() that may do I/O or wait for daemon.
         private const val COMMAND_TIMEOUT_SECONDS = 90L
+
+        // Exit code returned when a command times out (124 matches GNU timeout behavior).
+        // Distinguishes "command failed" from "command hung and was killed".
         private const val COMMAND_TIMEOUT_CODE = 124
+
+        // Polling interval while exploit is running. Controls log update frequency in UI.
+        // Lower values = faster feedback; higher values = less CPU/IPC overhead.
         private val LOG_POLL_INTERVAL = 250.milliseconds
+
+        // Command to request device reboot during unroot. Uses `sync` to flush buffers
+        // first, then tries svc power reboot (Android) or reboot (shell fallback).
+        // Markers (UNROOT_REBOOT_REQUESTED) are parsed by UI.
         private const val REBOOT_COMMAND =
             "sync; if svc power reboot || reboot; then " +
                     "echo UNROOT_REBOOT_REQUESTED; else echo UNROOT_FAIL:reboot:${'$'}?; fi"

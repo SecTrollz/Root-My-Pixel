@@ -19,6 +19,7 @@ open class PayloadLocalDataSource(private val context: Context) {
      */
     open fun loadProfiles(): Result<List<BundledProfileDto>> {
         return try {
+            validateAssetPath(PROFILES_ASSET)
             val jsonString = context.assets.open(PROFILES_ASSET).bufferedReader().use { it.readText() }
             val feed = json.decodeFromString<BundledProfilesFeed>(jsonString)
             Result.success(feed.profiles)
@@ -40,6 +41,7 @@ open class PayloadLocalDataSource(private val context: Context) {
             require(destination.parentFile?.isDirectory == true) {
                 "Destination directory is unavailable"
             }
+            validateAssetPath(assetPath)
             onProgress("Extracting $assetPath...")
             val buffer = ByteArray(16384)
 
@@ -59,6 +61,24 @@ open class PayloadLocalDataSource(private val context: Context) {
         } catch (e: Exception) {
             destination.delete()
             Result.failure(e)
+        }
+    }
+
+    private fun validateAssetPath(assetPath: String) {
+        require(assetPath.isNotBlank()) {
+            "Asset path cannot be empty"
+        }
+        require(!assetPath.startsWith("/")) {
+            "Asset path must be relative (got: $assetPath)"
+        }
+        require(!assetPath.contains("..")) {
+            "Asset path contains directory traversal attempt (got: $assetPath)"
+        }
+        require(!assetPath.contains("\\")) {
+            "Asset path contains backslashes (got: $assetPath)"
+        }
+        require(assetPath.matches(Regex("""[a-zA-Z0-9._/\-]+"""))) {
+            "Asset path contains invalid characters (got: $assetPath)"
         }
     }
 

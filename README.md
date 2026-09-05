@@ -33,6 +33,27 @@ Root My Pixel lets you *temporarily* gain root access with ReSukiSU in just one 
 
 ---
 
+## Exploit Persistence & CVE Research Note
+
+**Why CVE-2026-43499 is the Primary & Sufficient Exploit**
+
+Initial development explored CVE-2026-0163 (VPU driver UAF) as a potential fallback for Pixel 8-10 devices, with the assumption that CVE-2026-43499 would be patched in the August 2026 security update (CP2A.260805.005+). However, research into Android Security Bulletins and device testing revealed:
+
+- **CVE-2026-0163:** Patched August 5, 2026 on all affected Pixel 8-10 devices
+- **CVE-2026-43499:** **STILL VULNERABLE** in August 2026 and beyond (CP2A.260805.005, tested through August 29)
+
+**Timeline Verification:**
+- All August 2026 builds (CP2A.260805.005) on all tested devices show CVE-2026-43499 remains exploitable
+- The vulnerability persisted well past the initial security update window
+- There is **no device/build combination** where CVE-2026-0163 would serve as a fallback (by the time it would be needed, it's already patched)
+
+**Architectural Decision:**
+Root My Pixel continues to rely on **CVE-2026-43499 (NebuSec IonStack)** as the sole exploit mechanism. No fallback exploit was integrated because the research confirmed the primary exploit remained viable across all tested builds, eliminating the need for complexity or additional payload management.
+
+This approach maintains simplicity while ensuring broad device/build coverage without touching bootloader or firmware modification.
+
+---
+
 ## Supported Devices & Build Profiles
 
 | Device                | Codename   | Supported Builds   | Kernel KMI      | Tested |
