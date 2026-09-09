@@ -152,8 +152,8 @@ main() {
     detect_device
     local profile=$(find_profile "$DEVICE" "$KERNEL" "$BUILD")
     [ -z "$profile" ] && { log "ERROR" "Device not supported"; exit 1; }
-    
-    IFS='|' read -r dev profile_build kmi <<< "$profile"
+
+    echo "$profile" | IFS='|' read -r dev profile_build kmi
     log "INFO" "DEVICE: $DEVICE ($MODEL) | BUILD: $BUILD | KMI: $kmi"
     
     prompt "Continue?" || exit 0
