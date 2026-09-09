@@ -1,6 +1,6 @@
 #!/system/bin/sh
-# KernelSU Fresh Install — Stable & Bulletproof Edition
-# Extensive error checking, recovery, and diagnostics
+# KernelSU Setup — Minimal Bulletproof Version
+# Stripped down to essentials, no fancy monitoring
 
 set -e
 
@@ -9,326 +9,124 @@ HELPER_FILE="$TEMP_DIR/helper.so"
 EXPLOIT_FILE="$TEMP_DIR/exploit.so"
 KSUD_FILE="$TEMP_DIR/ksud"
 EXPLOIT_LOG="$TEMP_DIR/exploit.log"
-STATE_FILE="$TEMP_DIR/rmp_state"
 
 log() {
     local level="$1"; shift
-    local ts=$(date '+%H:%M:%S')
-    echo "[$ts] [$level] $*"
+    echo "[$(date '+%H:%M:%S')] [$level] $*"
 }
 
 info() { log "INFO" "$@"; }
 warn() { log "WARN" "$@"; }
 fatal() { log "FATAL" "$@"; exit 1; }
-debug() { log "DEBUG" "$@"; }
-
-# Save state for recovery
-save_state() {
-    echo "$1" > "$STATE_FILE"
-    debug "State saved: $1"
-}
-
-# Pre-flight checks
-preflight() {
-    info ""
-    info "=== PRE-FLIGHT CHECKS ==="
-    
-    # Check filesystem space
-    local free=$(df /data/local/tmp 2>/dev/null | tail -1 | awk '{print $4}' || echo "0")
-    if [ "$free" -lt 100000 ]; then
-        warn "Low disk space on /data/local/tmp (${free}KB free)"
-        info "Attempting cleanup..."
-        rm -f /data/local/tmp/*.so /data/local/tmp/ksud 2>/dev/null || true
-    fi
-    
-    # Verify /data/local/tmp is writable
-    if ! touch "$TEMP_DIR/test.tmp" 2>/dev/null; then
-        fatal "/data/local/tmp is not writable"
-    fi
-    rm -f "$TEMP_DIR/test.tmp"
-    info "✓ /data/local/tmp is writable"
-    
-    # Check if already rooted
-    if test -e /dev/kernelsu 2>/dev/null; then
-        info "✓ KernelSU already installed!"
-        info "No need to run exploit"
-        return 0
-    fi
-    
-    info "✓ Pre-flight checks passed"
-    return 1
-}
-
-extract_payloads() {
-    info ""
-    info "=== EXTRACTING PAYLOADS ==="
-    mkdir -p "$TEMP_DIR"
-    save_state "extracting"
-    
-    # Helper
-    info "Extracting helper (24KB)..."
-    if ! echo "$HELPER_B64" | base64 -d > "$HELPER_FILE" 2>/dev/null; then
-        fatal "Helper base64 decode failed"
-    fi
-    if ! chmod 755 "$HELPER_FILE"; then
-        fatal "Failed to chmod helper"
-    fi
-    if [ ! -s "$HELPER_FILE" ]; then
-        fatal "Helper file is empty after extraction"
-    fi
-    local helper_size=$(wc -c < "$HELPER_FILE")
-    info "✓ Helper extracted ($helper_size bytes)"
-    
-    # Exploit
-    info "Extracting exploit (91KB)..."
-    if ! echo "$EXPLOIT_B64" | base64 -d > "$EXPLOIT_FILE" 2>/dev/null; then
-        fatal "Exploit base64 decode failed"
-    fi
-    if ! chmod 755 "$EXPLOIT_FILE"; then
-        fatal "Failed to chmod exploit"
-    fi
-    if [ ! -s "$EXPLOIT_FILE" ]; then
-        fatal "Exploit file is empty after extraction"
-    fi
-    local exploit_size=$(wc -c < "$EXPLOIT_FILE")
-    info "✓ Exploit extracted ($exploit_size bytes)"
-    
-    # ksud
-    info "Extracting ksud daemon (4.8MB)..."
-    if ! echo "$KSUD_B64" | base64 -d > "$KSUD_FILE" 2>/dev/null; then
-        fatal "ksud base64 decode failed"
-    fi
-    if ! chmod 755 "$KSUD_FILE"; then
-        fatal "Failed to chmod ksud"
-    fi
-    if [ ! -s "$KSUD_FILE" ]; then
-        fatal "ksud file is empty after extraction"
-    fi
-    local ksud_size=$(wc -c < "$KSUD_FILE")
-    info "✓ ksud extracted ($ksud_size bytes)"
-    
-    # Test helper binary
-    info "Testing helper binary..."
-    if ! "$HELPER_FILE" --version >/dev/null 2>&1; then
-        debug "Helper --version not supported, trying basic execution..."
-        if ! timeout 2 "$HELPER_FILE" -c "id" >/dev/null 2>&1; then
-            warn "Helper binary test inconclusive (might still work)"
-        fi
-    fi
-    info "✓ All payloads extracted and validated"
-}
-
-run_exploit() {
-    info ""
-    info "=== RUNNING EXPLOIT ==="
-    save_state "exploit"
-    
-    info "Helper: $HELPER_FILE"
-    info "Exploit: $EXPLOIT_FILE"
-    info ""
-    
-    echo ">>> Ready to execute CVE-2026-43499 exploit? [y/n]:"
-    read ans
-    case "$ans" in
-        y|yes) ;;
-        *) fatal "Exploit cancelled by user" ;;
-    esac
-    
-    # Clean up old log
-    rm -f "$EXPLOIT_LOG"
-    
-    # Run exploit with PID tracking
-    info "Starting exploit process..."
-    local start=$(date +%s)
-    "$HELPER_FILE" --run-payload "$EXPLOIT_FILE" "$HELPER_FILE" "$EXPLOIT_LOG" 2>&1 &
-    local pid=$!
-    debug "Exploit PID: $pid"
-    
-    # Monitor with timeout
-    local success=0
-    while true; do
-        if ! kill -0 $pid 2>/dev/null; then
-            debug "Exploit process finished"
-            break
-        fi
-        
-        sleep 1
-        
-        # Show progress
-        if [ -f "$EXPLOIT_LOG" ]; then
-            tail -1 "$EXPLOIT_LOG" | grep -q "done=1" && {
-                info "✓ Exploit marked as done"
-                success=1
-            }
-        fi
-        
-        # Timeout check
-        local elapsed=$(($(date +%s) - start))
-        if [ $elapsed -gt 1800 ]; then
-            kill $pid 2>/dev/null || true
-            fatal "Exploit timeout after 30 minutes"
-        fi
-        
-        if [ $((elapsed % 10)) -eq 0 ]; then
-            debug "Exploit running... ${elapsed}s elapsed"
-        fi
-    done
-    
-    # Wait for process and get exit code
-    wait $pid || {
-        local exit_code=$?
-        if [ -f "$EXPLOIT_LOG" ]; then
-            tail -5 "$EXPLOIT_LOG"
-        fi
-        fatal "Exploit process exited with code $exit_code"
-    }
-    
-    # Verify success markers
-    if [ ! -f "$EXPLOIT_LOG" ]; then
-        fatal "Exploit log not found - exploit likely failed"
-    fi
-    
-    if ! grep -q "done=1" "$EXPLOIT_LOG"; then
-        fatal "Exploit did not complete (done=1 marker not found)"
-    fi
-    
-    if ! grep -q "root=1" "$EXPLOIT_LOG"; then
-        fatal "Exploit did not gain root (root=1 marker not found)"
-    fi
-    
-    info "✓ Exploit successful (done=1, root=1 confirmed)"
-}
-
-setup_kernelsu() {
-    info ""
-    info "=== SETTING UP KERNELSU ==="
-    save_state "setup"
-    
-    # Create directories
-    info "Creating /data/adb/ksu..."
-    if ! "$HELPER_FILE" -c "mkdir -p /data/adb/ksu" 2>/dev/null; then
-        warn "mkdir failed but continuing"
-    fi
-    if ! "$HELPER_FILE" -c "chmod 700 /data/adb/ksu" 2>/dev/null; then
-        warn "chmod failed but continuing"
-    fi
-    
-    # Verify directory exists
-    if ! "$HELPER_FILE" -c "test -d /data/adb/ksu" 2>/dev/null; then
-        warn "Warning: /data/adb/ksu not accessible"
-    else
-        info "✓ /data/adb/ksu created"
-    fi
-    
-    # Copy ksud
-    info "Staging ksud daemon..."
-    if "$HELPER_FILE" -c "cp $KSUD_FILE /data/adb/ksu/ksud" 2>/dev/null; then
-        "$HELPER_FILE" -c "chmod 755 /data/adb/ksu/ksud" 2>/dev/null || true
-        info "✓ ksud staged at /data/adb/ksu/ksud"
-    else
-        warn "Warning: Failed to copy ksud to /data/adb/ksu"
-    fi
-    
-    # SELinux permissive
-    info "Setting SELinux permissive..."
-    "$HELPER_FILE" -c "setenforce 0" 2>/dev/null || true
-    
-    # Verify /dev/kernelsu
-    info "Verifying KernelSU kernel interface..."
-    if "$HELPER_FILE" -c "test -e /dev/kernelsu" 2>/dev/null; then
-        info "✓ /dev/kernelsu exists (KernelSU in kernel)"
-    elif "$HELPER_FILE" -c "test -d /sys/module/kernelsu" 2>/dev/null; then
-        info "✓ KernelSU kernel module detected"
-    else
-        warn "Warning: /dev/kernelsu not found yet"
-        info "This is normal before reboot - module will load on restart"
-    fi
-    
-    info "✓ KernelSU setup complete"
-}
-
-cleanup() {
-    info ""
-    info "=== CLEANUP ==="
-    
-    rm -f "$EXPLOIT_FILE" 2>/dev/null || true
-    rm -f "$EXPLOIT_LOG" 2>/dev/null || true
-    
-    info "✓ Temporary files cleaned"
-}
-
-final_verification() {
-    info ""
-    info "=== FINAL VERIFICATION ==="
-    save_state "verification"
-    
-    if "$HELPER_FILE" -c "test -e /data/adb/ksu/ksud" 2>/dev/null; then
-        info "✓ ksud daemon is staged"
-    fi
-    
-    if "$HELPER_FILE" -c "test -e /dev/kernelsu" 2>/dev/null; then
-        info "✓ /dev/kernelsu is ready NOW"
-        info "You have persistent root - can reboot anytime"
-    else
-        info "⚠ /dev/kernelsu not visible yet"
-        info "This is expected - will appear after reboot"
-    fi
-}
 
 main() {
     info "╔════════════════════════════════════════════╗"
-    info "║  KernelSU Setup — Stable Edition           ║"
+    info "║  KernelSU Setup — Minimal Version          ║"
     info "║  Pixel 9a (tegu) • CP2A.260805.005         ║"
     info "╚════════════════════════════════════════════╝"
     
-    # Check if already done
-    if preflight; then
-        info "KernelSU is already installed!"
-        info "You can now use ReSukiSU Manager"
+    # Check if already installed
+    if test -e /dev/kernelsu 2>/dev/null; then
+        info "✓ KernelSU already installed"
         return 0
     fi
     
-    # Get confirmation
     echo ""
-    echo ">>> Continue with exploit execution? [y/n]:"
+    echo ">>> Continue? [y/n]:"
     read ans
     case "$ans" in
         y|yes) ;;
         *) info "Cancelled"; exit 0 ;;
     esac
     
-    # Run stages
-    extract_payloads
-    run_exploit
-    setup_kernelsu
-    cleanup
-    final_verification
+    # Extract payloads
+    info ""
+    info "=== EXTRACTING PAYLOADS ==="
+    mkdir -p "$TEMP_DIR"
     
-    # Reboot prompt
+    info "Extracting helper..."
+    echo "$HELPER_B64" | base64 -d > "$HELPER_FILE" || fatal "Helper extraction failed"
+    chmod 755 "$HELPER_FILE"
+    [ -s "$HELPER_FILE" ] || fatal "Helper is empty"
+    info "✓ Helper extracted"
+    
+    info "Extracting exploit..."
+    echo "$EXPLOIT_B64" | base64 -d > "$EXPLOIT_FILE" || fatal "Exploit extraction failed"
+    chmod 755 "$EXPLOIT_FILE"
+    [ -s "$EXPLOIT_FILE" ] || fatal "Exploit is empty"
+    info "✓ Exploit extracted"
+    
+    info "Extracting ksud..."
+    echo "$KSUD_B64" | base64 -d > "$KSUD_FILE" || fatal "ksud extraction failed"
+    chmod 755 "$KSUD_FILE"
+    [ -s "$KSUD_FILE" ] || fatal "ksud is empty"
+    info "✓ ksud extracted"
+    
+    # Run exploit
+    info ""
+    info "=== RUNNING EXPLOIT ==="
+    
+    echo ""
+    echo ">>> Ready to run exploit? [y/n]:"
+    read ans
+    case "$ans" in
+        y|yes) ;;
+        *) fatal "Cancelled"; ;;
+    esac
+    
+    rm -f "$EXPLOIT_LOG"
+    
+    info "Starting exploit... (this may take a minute)"
+    "$HELPER_FILE" --run-payload "$EXPLOIT_FILE" "$HELPER_FILE" "$EXPLOIT_LOG" 2>&1
+    
+    # Check results
+    if [ -f "$EXPLOIT_LOG" ]; then
+        if grep -q "done=1" "$EXPLOIT_LOG" && grep -q "root=1" "$EXPLOIT_LOG"; then
+            info "✓ Exploit successful"
+        else
+            fatal "Exploit did not complete (check log)"
+        fi
+    else
+        fatal "No exploit log found"
+    fi
+    
+    # Setup KernelSU
+    info ""
+    info "=== SETTING UP KERNELSU ==="
+    
+    "$HELPER_FILE" -c "mkdir -p /data/adb/ksu && chmod 700 /data/adb/ksu" 2>/dev/null || true
+    "$HELPER_FILE" -c "cp $KSUD_FILE /data/adb/ksu/ksud && chmod 755 /data/adb/ksu/ksud" 2>/dev/null || true
+    "$HELPER_FILE" -c "setenforce 0" 2>/dev/null || true
+    
+    sleep 2
+    
+    if "$HELPER_FILE" -c "test -e /dev/kernelsu" 2>/dev/null; then
+        info "✓ /dev/kernelsu is ready"
+    else
+        info "⚠ /dev/kernelsu not yet visible (will appear after reboot)"
+    fi
+    
+    # Cleanup
+    rm -f "$EXPLOIT_FILE" "$EXPLOIT_LOG"
+    info "✓ Cleanup done"
+    
+    # Final message
     info ""
     info "════════════════════════════════════════════"
-    info "✓ SETUP COMPLETE"
+    info "✓ SUCCESS"
     info "════════════════════════════════════════════"
-    info ""
-    info "NEXT: Reboot device to activate KernelSU"
     info ""
     echo ">>> Reboot now? [y/n]:"
     read ans
     case "$ans" in
         y|yes)
             info "Rebooting..."
-            save_state "rebooting"
-            "$HELPER_FILE" -c "reboot" 2>/dev/null || {
-                warn "Reboot command failed, you can reboot manually"
-            }
-            sleep 5
+            "$HELPER_FILE" -c "reboot" 2>/dev/null || sleep 2
             ;;
         *)
-            info "Remember to reboot: su -c 'reboot'"
+            info "You can reboot anytime: su -c 'reboot'"
             ;;
     esac
-    
-    save_state "done"
 }
 
 # Embedded payloads
