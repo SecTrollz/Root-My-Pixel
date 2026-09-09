@@ -1,0 +1,336 @@
+#!/bin/bash
+# Root My Pixel — Ultra-Easy Mode
+# Simple enough for anyone. Follow the prompts.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$SCRIPT_DIR/lib"
+
+# Colors & emojis
+GREEN='✅'
+RED='❌'
+WAIT='⏳'
+ROCKET='🚀'
+PHONE='📱'
+LOCK='🔓'
+CHECK='✓'
+
+source "$LIB_DIR/common.sh" || die "lib/common.sh not found"
+
+clear_screen() {
+    clear 2>/dev/null || printf '\033[2J\033[0;0H'
+}
+
+show_header() {
+    echo ""
+    echo "╔═══════════════════════════════════════╗"
+    echo "║      ROOT MY PIXEL - EASY MODE        ║"
+    echo "║    Gain Root on Your Google Pixel     ║"
+    echo "╚═══════════════════════════════════════╝"
+    echo ""
+}
+
+wizard_intro() {
+    clear_screen
+    show_header
+
+    echo "Hi! This will help you gain root access on your Pixel phone."
+    echo ""
+    echo "What this does:"
+    echo "  1. Checks what Pixel phone you have"
+    echo "  2. Downloads the exploit software"
+    echo "  3. Runs the exploit to get root access"
+    echo "  4. Installs KernelSU (root manager)"
+    echo ""
+    echo "⏱️  Takes about 5-10 minutes"
+    echo ""
+    echo "What you need:"
+    echo "  ✓ Shizuku app running"
+    echo "  ✓ Root My Pixel app installed"
+    echo "  ✓ Internet connection"
+    echo ""
+
+    read -p "Ready to continue? (yes/no): " ans
+    case "$ans" in
+        yes|y) return 0 ;;
+        *) echo "Goodbye!"; exit 0 ;;
+    esac
+}
+
+wizard_step1_detect() {
+    clear_screen
+    show_header
+    echo "STEP 1: Checking Your Phone"
+    echo "════════════════════════════"
+    echo ""
+    echo "$WAIT Detecting device..."
+    echo ""
+
+    source "$LIB_DIR/detect.sh" 2>/dev/null || die "Detection module failed"
+
+    if detect_device 2>/dev/null; then
+        echo "$GREEN Found: $DEVICE ($MODEL)"
+        echo "   Build: $BUILD"
+        echo "   Target: $TARGET"
+        echo ""
+        return 0
+    else
+        echo "$RED Your phone is not supported yet."
+        echo ""
+        echo "Supported phones:"
+        echo "  Pixel 10/10 Pro/10a"
+        echo "  Pixel 9/9a/9 Pro"
+        echo "  Pixel 8/8a/8 Pro"
+        echo "  Pixel 7/7a/7 Pro"
+        echo "  Pixel 6/6a/6 Pro"
+        echo ""
+        die "Unsupported device"
+    fi
+}
+
+wizard_step2_download() {
+    clear_screen
+    show_header
+    echo "STEP 2: Getting Software"
+    echo "════════════════════════"
+    echo ""
+    echo "$WAIT Checking for Root My Pixel app..."
+    echo ""
+
+    source "$LIB_DIR/payload.sh" 2>/dev/null || die "Payload module failed"
+
+    if extract_from_apk 2>/dev/null; then
+        echo "$GREEN Found Root My Pixel app!"
+        echo "   Using built-in software"
+        echo ""
+    else
+        echo "$WAIT No app found, downloading from internet..."
+        echo ""
+        if download_payloads 2>/dev/null; then
+            echo "$GREEN Downloaded successfully"
+            echo ""
+        else
+            echo "$RED Download failed"
+            echo ""
+            echo "Make sure you have:"
+            echo "  • Internet connection"
+            echo "  • Network access (WiFi or mobile data)"
+            echo ""
+            die "Download failed"
+        fi
+    fi
+}
+
+wizard_step3_ready() {
+    clear_screen
+    show_header
+    echo "STEP 3: Ready to Exploit"
+    echo "════════════════════════"
+    echo ""
+    echo "Everything is ready!"
+    echo ""
+    echo "Your phone will:"
+    echo "  1. See a brief screen flicker"
+    echo "  2. Stay on normally (no restart)"
+    echo "  3. Have temporary root access"
+    echo ""
+    echo "$ROCKET Ready to proceed?"
+    echo ""
+
+    read -p "Type 'yes' to continue: " ans
+    [ "$ans" != "yes" ] && {
+        echo "Cancelled. You can run this again whenever you're ready."
+        exit 0
+    }
+}
+
+wizard_step4_exploit() {
+    clear_screen
+    show_header
+    echo "STEP 4: Running Exploit"
+    echo "══════════════════════"
+    echo ""
+    echo "$WAIT This may take a few minutes..."
+    echo "   (Keep your phone screen on)"
+    echo ""
+
+    source "$LIB_DIR/exploit.sh" 2>/dev/null || die "Exploit module failed"
+
+    if run_exploit 2>/dev/null; then
+        echo ""
+        echo "$GREEN Exploit succeeded!"
+        echo ""
+        return 0
+    else
+        echo ""
+        echo "$RED Exploit failed"
+        echo ""
+        echo "Things to try:"
+        echo "  1. Make sure Shizuku is running"
+        echo "  2. Check internet connection"
+        echo "  3. Keep phone screen on"
+        echo "  4. Try again in a few seconds"
+        echo ""
+        die "Exploit failed"
+    fi
+}
+
+wizard_step5_install() {
+    clear_screen
+    show_header
+    echo "STEP 5: Installing Root Manager"
+    echo "════════════════════════════════"
+    echo ""
+    echo "$WAIT Setting up KernelSU..."
+    echo "   (This is the permanent root access)"
+    echo ""
+
+    source "$LIB_DIR/kernelsu.sh" 2>/dev/null || die "KernelSU module failed"
+
+    if install_kernelsu 2>/dev/null; then
+        echo ""
+        echo "$GREEN KernelSU installed!"
+        echo ""
+        return 0
+    else
+        echo ""
+        echo "$RED Installation failed"
+        echo ""
+        echo "But your exploit may have worked anyway!"
+        echo "Restart your phone and try again."
+        echo ""
+        die "Installation failed"
+    fi
+}
+
+wizard_complete() {
+    clear_screen
+    show_header
+    echo "SUCCESS! $LOCK"
+    echo "══════════════════════════════"
+    echo ""
+    echo "Your Pixel now has root access!"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Open 'ReSukiSU' app"
+    echo "  2. Grant root to other apps"
+    echo "  3. Restart your phone"
+    echo ""
+    echo "To use root:"
+    echo "  Open Termux and type: su"
+    echo ""
+    echo "Enjoy! 🎉"
+    echo ""
+}
+
+# Simple menu
+show_menu() {
+    clear_screen
+    show_header
+
+    echo "What do you want to do?"
+    echo ""
+    echo "  1. Start the easy walkthrough"
+    echo "  2. Check if exploit worked"
+    echo "  3. Clean up temporary files"
+    echo "  4. Exit"
+    echo ""
+
+    read -p "Choose (1-4): " choice
+    echo ""
+
+    case "$choice" in
+        1) wizard_full ;;
+        2) check_status ;;
+        3) cleanup_files ;;
+        4) exit 0 ;;
+        *) echo "Invalid. Try again."; sleep 1; show_menu ;;
+    esac
+}
+
+wizard_full() {
+    wizard_intro
+    wizard_step1_detect
+    wizard_step2_download
+    wizard_step3_ready
+    wizard_step4_exploit
+    wizard_step5_install
+    wizard_complete
+}
+
+check_status() {
+    clear_screen
+    show_header
+    echo "Checking Status"
+    echo "═══════════════"
+    echo ""
+
+    source "$LIB_DIR/detect.sh" 2>/dev/null || {
+        echo "$RED Cannot detect device"
+        sleep 2
+        return 1
+    }
+
+    if detect_device 2>/dev/null; then
+        echo "$GREEN Device: $DEVICE ($MODEL)"
+        echo "   Build: $BUILD"
+        echo ""
+
+        if [ -f "$CACHE_DIR/exploit.so" ]; then
+            echo "$GREEN Exploit payload: Ready"
+        else
+            echo "$RED Exploit payload: Not downloaded"
+        fi
+
+        if [ -f "$CACHE_DIR/ksud" ]; then
+            echo "$GREEN KernelSU: Ready"
+        else
+            echo "$RED KernelSU: Not downloaded"
+        fi
+
+        if [ -S "/data/local/tmp/temp_su.sock" ]; then
+            echo "$GREEN Root access: Active!"
+        else
+            echo "$WAIT Root access: Checking..."
+        fi
+    fi
+
+    echo ""
+    read -p "Press Enter to continue..."
+    show_menu
+}
+
+cleanup_files() {
+    clear_screen
+    show_header
+    echo "Clean Up"
+    echo "════════"
+    echo ""
+    echo "This removes temporary files to save space."
+    echo ""
+
+    read -p "Continue? (yes/no): " ans
+    if [ "$ans" = "yes" ]; then
+        rm -rf "$CACHE_DIR" 2>/dev/null
+        echo "$GREEN Cleaned!"
+    fi
+
+    echo ""
+    read -p "Press Enter to continue..."
+    show_menu
+}
+
+# Main
+main() {
+    mkdir -p "$CACHE_DIR"
+
+    case "${1:-menu}" in
+        wizard) wizard_full ;;
+        quick)  wizard_intro && wizard_step1_detect && wizard_step2_download && wizard_step3_ready && wizard_step4_exploit && wizard_step5_install && wizard_complete ;;
+        menu)   show_menu ;;
+        *)      show_menu ;;
+    esac
+}
+
+main "$@"
