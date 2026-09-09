@@ -111,7 +111,7 @@ execute_exploit() {
     info "Helper: $HELPER_FILE"
     info "Exploit: $EXPLOIT_FILE"
     
-    read -p ">>> Ready to execute exploit? [y/n]: " ans
+    echo ">>> Ready to execute exploit? [y/n]: "; read ans
     case "$ans" in
         y|yes) ;;
         *) fatal "Exploit cancelled" ;;
@@ -196,7 +196,7 @@ main() {
     
     info "Profile: KMI=$kmi"
     
-    read -p ">>> Continue? [y/n]: " ans
+    echo ">>> Continue? [y/n]: "; read ans
     case "$ans" in
         y|yes) ;;
         *) info "Cancelled"; exit 0 ;;
