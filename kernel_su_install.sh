@@ -158,26 +158,71 @@ install_kernelsu() {
     info "=== SETTING UP KERNELSU ==="
     info "KMI: $kmi"
     
-    # Create directories
-    "$HELPER_FILE" -c "mkdir -p /data/adb && chmod 700 /data/adb" 2>/dev/null || true
+    # Create KernelSU directories with explicit permissions
+    info "Creating /data/adb/ksu..."
+    "$HELPER_FILE" -c "mkdir -p /data/adb/ksu && chmod 700 /data/adb/ksu" || {
+        warn "mkdir -p /data/adb/ksu failed"
+    }
     
-    # Set SELinux permissive
+    # Verify directories exist
+    if "$HELPER_FILE" -c "test -d /data/adb/ksu"; then
+        info "✓ /data/adb/ksu created"
+    else
+        warn "/data/adb/ksu does not exist"
+    fi
+    
+    # Set SELinux permissive (required for KernelSU)
+    info "Setting SELinux permissive..."
     "$HELPER_FILE" -c "setenforce 0" 2>/dev/null || true
     
-    # Stage and run ksud
-    "$HELPER_FILE" -c "chmod 755 $KSUD_FILE" 2>/dev/null || true
-    info "Running ksud late-load (KMI=$kmi)..."
-    "$HELPER_FILE" -c "$KSUD_FILE late-load --kmi $kmi" 2>/dev/null || true
+    # Copy ksud to /data/adb/ksu
+    info "Staging ksud binary..."
+    "$HELPER_FILE" -c "cp $KSUD_FILE /data/adb/ksu/ksud && chmod 755 /data/adb/ksu/ksud" 2>/dev/null || {
+        warn "Failed to copy ksud to /data/adb/ksu, trying /system/xbin"
+        "$HELPER_FILE" -c "cp $KSUD_FILE /system/xbin/ksud && chmod 755 /system/xbin/ksud" 2>/dev/null || true
+    }
+    
+    # Try ksud late-load with KMI
+    info "Attempting ksud late-load with KMI=$kmi..."
+    "$HELPER_FILE" -c "$KSUD_FILE late-load --kmi $kmi" 2>/dev/null || {
+        warn "ksud late-load failed, trying without KMI..."
+        "$HELPER_FILE" -c "$KSUD_FILE late-load" 2>/dev/null || {
+            warn "ksud late-load failed completely"
+        }
+    }
     
     # Wait for module to load
-    sleep 2
-    if "$HELPER_FILE" -c "test -e /dev/kernelsu" 2>/dev/null; then
-        info "✓ KernelSU verified (/dev/kernelsu exists)"
+    info "Waiting for KernelSU kernel module to load..."
+    local attempts=0
+    while [ $attempts -lt 10 ]; do
+        sleep 1
+        if "$HELPER_FILE" -c "test -e /dev/kernelsu" 2>/dev/null; then
+            info "✓ KernelSU found at /dev/kernelsu"
+            return 0
+        fi
+        if "$HELPER_FILE" -c "test -e /sys/kernel/kernelsu" 2>/dev/null; then
+            info "✓ KernelSU found at /sys/kernel/kernelsu"
+            return 0
+        fi
+        attempts=$((attempts + 1))
+        info "Waiting... (attempt $attempts/10)"
+    done
+    
+    # Last resort: check if module loaded
+    info "Checking kernel module status..."
+    if "$HELPER_FILE" -c "lsmod | grep -q kernelsu" 2>/dev/null; then
+        info "✓ kernelsu module is loaded in kernel"
         return 0
     fi
     
-    warn "KernelSU verification inconclusive (module may still be loading)"
-    return 0
+    warn "KernelSU module verification failed after 10 attempts"
+    info "This might mean:"
+    info "  1. Your kernel doesn't have KernelSU support compiled in"
+    info "  2. The ksud binary is incompatible with your kernel"
+    info "  3. The module needs a reboot to activate"
+    info ""
+    info "Try rebooting: su -c 'reboot'"
+    return 1
 }
 
 # Main execution
