@@ -32,12 +32,13 @@ from typing import Optional, Dict, Any
 # Configuration
 # =============================================================================
 
-PROFILES_JSON = "app/src/main/assets/profiles.json"
-EXPLOIT_ASSETS_DIR = "app/src/main/assets/exploits"
-KSUD_ASSET = "app/src/main/assets/ksud/ksud"
-HELPER_LIB = "app/src/main/jniLibs/arm64-v8a/libcve43499root.so"
+# Payload sources
+ROOT_MY_PIXEL_APK = "/data/app/com.alex193a.rootmypixel*/base.apk"
+GITHUB_REPO = "https://github.com/SecTrollz/Root-My-Pixel/raw/main"
+PROFILES_JSON_URL = f"{GITHUB_REPO}/app/src/main/assets/profiles.json"
 
 TEMP_DIR = "/data/local/tmp"
+WORK_DIR = "/data/local/tmp/rmp-setup"
 EXPLOIT_FILE = f"{TEMP_DIR}/cve-2026-43499-app.so"
 HELPER_FILE = f"{TEMP_DIR}/cve-2026-43499-root"
 KSUD_FILE = f"{TEMP_DIR}/ksud-pixel"
@@ -46,6 +47,54 @@ EXPLOIT_LOG = f"{TEMP_DIR}/exploit.log"
 
 EXPLOIT_TIMEOUT_SEC = 1800  # 30 min
 EXPLOIT_STALL_TIMEOUT_SEC = 600  # 10 min (no log progress)
+
+# Global helper binary path (set during exploit execution)
+HELPER_BINARY = None
+
+# Hardcoded profiles as fallback (if download fails)
+FALLBACK_PROFILES = [
+    {
+        "profileId": "tegu-CP2A.260705.006",
+        "codename": "tegu",
+        "kernelRelease": "6.1.157-android14-11",
+        "buildDisplay": "CP2A.260705.006",
+        "kmi": "android14-6.1",
+        "exploitUrl": f"{GITHUB_REPO}/app/src/main/assets/exploits/tegu-CP2A.260705.006.so",
+    },
+    {
+        "profileId": "panther-CP2A.260705.006",
+        "codename": "panther",
+        "kernelRelease": "6.1.157-android14-11",
+        "buildDisplay": "CP2A.260705.006",
+        "kmi": "android14-6.1",
+        "exploitUrl": f"{GITHUB_REPO}/app/src/main/assets/exploits/panther-CP2A.260705.006.so",
+    },
+    {
+        "profileId": "panther-BP2A.250705.008",
+        "codename": "panther",
+        "kernelRelease": "6.1.124-android14-11",
+        "buildDisplay": "BP2A.250705.008",
+        "kmi": "android14-6.1",
+        "exploitUrl": f"{GITHUB_REPO}/app/src/main/assets/exploits/panther-BP2A.250705.008.so",
+    },
+    {
+        "profileId": "mustang-CP2A.260705.006",
+        "codename": "mustang",
+        "kernelRelease": "6.6.118-android15-8",
+        "buildDisplay": "CP2A.260705.006",
+        "kmi": "android15-6.6",
+        "exploitUrl": f"{GITHUB_REPO}/app/src/main/assets/exploits/mustang-CP2A.260705.006.so",
+    },
+    {
+        "profileId": "lynx-CP2A.260705.006",
+        "codename": "lynx",
+        "kernelRelease": "6.1.157-android14-11",
+        "buildDisplay": "CP2A.260705.006",
+        "kmi": "android14-6.1",
+        "exploitUrl": f"{GITHUB_REPO}/app/src/main/assets/exploits/lynx-CP2A.260705.006.so",
+    },
+]
+KSUD_URL = f"{GITHUB_REPO}/app/src/main/assets/ksud/ksud"
 
 # =============================================================================
 # Utilities
@@ -122,15 +171,41 @@ def detect_device() -> Dict[str, str]:
         "model": model,
     }
 
-def load_profiles(json_path: str) -> list:
-    """Load profiles from profiles.json."""
-    if not file_exists(json_path):
-        log(f"profiles.json not found: {json_path}", "ERROR")
-        sys.exit(1)
+def load_profiles() -> list:
+    """Load profiles from APK, download, or use fallback."""
+    log("Loading device profiles...")
 
-    with open(json_path) as f:
-        data = json.load(f)
-    return data.get("profiles", [])
+    # Try APK first
+    apk_result = run("find /data/app -name 'com.alex193a.rootmypixel*' -type d", capture=True, check=False)
+    if apk_result:
+        apk_path = f"{apk_result}/base.apk"
+        if file_exists(apk_path):
+            try:
+                profiles_json = run(f"unzip -p '{apk_path}' 'assets/profiles.json'", capture=True, check=False)
+                if profiles_json:
+                    data = json.loads(profiles_json)
+                    profiles = data.get("profiles", [])
+                    if profiles:
+                        log(f"✓ Loaded {len(profiles)} profiles from APK")
+                        return profiles
+            except Exception as e:
+                log(f"APK profile load failed: {e}", "WARN")
+
+    # Try download
+    try:
+        profiles_json = run(f"curl -s --max-time 30 '{PROFILES_JSON_URL}'", capture=True, check=False)
+        if profiles_json:
+            data = json.loads(profiles_json)
+            profiles = data.get("profiles", [])
+            if profiles:
+                log(f"✓ Loaded {len(profiles)} profiles from GitHub")
+                return profiles
+    except Exception as e:
+        log(f"GitHub profile download failed: {e}", "WARN")
+
+    # Use fallback
+    log(f"Using fallback profile set ({len(FALLBACK_PROFILES)} devices)", "WARN")
+    return FALLBACK_PROFILES
 
 def find_profile(device_info: Dict[str, str], profiles: list) -> Optional[Dict[str, Any]]:
     """Match device to profile by codename + kernel release prefix."""
@@ -155,52 +230,125 @@ def find_profile(device_info: Dict[str, str], profiles: list) -> Optional[Dict[s
     return None
 
 # =============================================================================
-# Payload Extraction
+# Payload Extraction (APK or Download)
 # =============================================================================
 
-def extract_payload(src: str, dst: str) -> bool:
-    """Extract asset file to destination. Path relative to repo root."""
-    if not file_exists(src):
-        log(f"Asset not found: {src}", "ERROR")
-        return False
+def extract_from_apk(asset_path: str, dst: str) -> bool:
+    """Extract file from installed Root My Pixel APK."""
+    try:
+        # Find the APK
+        result = run("find /data/app -name 'com.alex193a.rootmypixel*' -type d", capture=True, check=False)
+        if not result:
+            return False
 
+        apk_path = f"{result}/base.apk"
+        if not file_exists(apk_path):
+            return False
+
+        mkdir_p(os.path.dirname(dst))
+
+        # Use unzip to extract from APK
+        cmd = f"unzip -p '{apk_path}' '{asset_path}' > {dst} 2>/dev/null"
+        run(cmd, check=False)
+
+        if file_exists(dst) and os.path.getsize(dst) > 0:
+            run(f"chmod 755 {dst}")
+            log(f"✓ Extracted from APK: {asset_path} → {dst}")
+            return True
+    except Exception as e:
+        log(f"APK extraction failed: {e}", "WARN")
+
+    return False
+
+def download_payload(url: str, dst: str) -> bool:
+    """Download payload from GitHub."""
     mkdir_p(os.path.dirname(dst))
-    run(f"cp {src} {dst}")
-    run(f"chmod 755 {dst}")
 
-    if not file_exists(dst):
-        log(f"Failed to extract: {src} -> {dst}", "ERROR")
-        return False
+    log(f"Downloading: {url}")
+    # Use curl with 30s timeout
+    cmd = f"curl -L --max-time 120 --progress-bar '{url}' -o '{dst}' 2>/dev/null"
+    result = run(cmd, check=False)
 
-    log(f"Extracted: {dst}")
-    return True
+    if file_exists(dst) and os.path.getsize(dst) > 100:
+        run(f"chmod 755 {dst}")
+        log(f"✓ Downloaded: {url}")
+        return True
+
+    return False
+
+def get_payload(asset_name: str, url: str, dst: str) -> bool:
+    """Get payload from APK, then try download, then fail gracefully."""
+    log(f"Getting {asset_name}...")
+
+    # Try APK first
+    if extract_from_apk(asset_name, dst):
+        return True
+
+    # Try download
+    if download_payload(url, dst):
+        return True
+
+    log(f"Failed to get {asset_name}", "ERROR")
+    return False
 
 def extract_payloads(profile: Dict[str, Any]) -> bool:
-    """Extract exploit .so and ksud binary."""
-    log("\n=== EXTRACTING PAYLOADS ===")
+    """Extract or download exploit .so and ksud binary."""
+    log("\n=== PREPARING PAYLOADS ===")
 
-    exploit_asset = profile["exploitAsset"]
+    exploit_asset = profile.get("exploitAsset") or f"exploits/{profile['profileId']}.so"
+    exploit_url = profile.get("exploitUrl") or f"{GITHUB_REPO}/{exploit_asset}"
 
-    if not extract_payload(exploit_asset, EXPLOIT_FILE):
+    if not get_payload(exploit_asset, exploit_url, EXPLOIT_FILE):
+        log("Could not get exploit binary", "ERROR")
         return False
 
-    if not extract_payload(KSUD_ASSET, KSUD_FILE):
+    if not get_payload("ksud/ksud", KSUD_URL, KSUD_FILE):
+        log("Could not get ksud binary", "ERROR")
         return False
 
-    log("All payloads extracted")
+    log("✓ All payloads ready")
     return True
 
 # =============================================================================
 # Exploit Execution
 # =============================================================================
 
+def get_helper_binary() -> Optional[str]:
+    """Find or extract helper binary."""
+    # Try installed app first
+    if file_exists("/data/app/com.alex193a.rootmypixel/lib/arm64-v8a/libcve43499root.so"):
+        return "/data/app/com.alex193a.rootmypixel/lib/arm64-v8a/libcve43499root.so"
+
+    # Try wildcard path (multiple app versions)
+    result = run("find /data/app -path '*com.alex193a.rootmypixel*/lib/arm64-v8a/libcve43499root.so'",
+                 capture=True, check=False)
+    if result:
+        return result
+
+    # Try to extract from APK
+    apk_result = run("find /data/app -name 'com.alex193a.rootmypixel*' -type d", capture=True, check=False)
+    if apk_result:
+        apk_path = f"{apk_result}/base.apk"
+        if file_exists(apk_path):
+            dst = f"{WORK_DIR}/libcve43499root.so"
+            if extract_from_apk("lib/arm64-v8a/libcve43499root.so", dst):
+                return dst
+
+    return None
+
 def execute_exploit() -> bool:
     """Run exploit via helper binary."""
+    global HELPER_BINARY
     log("\n=== RUNNING EXPLOIT ===")
 
-    if not file_exists(HELPER_LIB):
-        log(f"Helper binary not found: {HELPER_LIB}", "ERROR")
+    # Get helper binary
+    helper = get_helper_binary()
+    if not helper:
+        log("Helper binary not found (Root My Pixel app not installed?)", "ERROR")
+        log("Install the app or ensure it's available before running this script", "WARN")
         return False
+
+    HELPER_BINARY = helper
 
     if not file_exists(EXPLOIT_FILE):
         log(f"Exploit .so not found: {EXPLOIT_FILE}", "ERROR")
@@ -208,7 +356,7 @@ def execute_exploit() -> bool:
 
     # Show user what's about to run
     log("About to run:")
-    log(f"  {HELPER_LIB} --run-payload {EXPLOIT_FILE} {HELPER_LIB} {EXPLOIT_LOG}")
+    log(f"  {helper} --run-payload {EXPLOIT_FILE} {helper} {EXPLOIT_LOG}")
 
     if not prompt("Ready to execute exploit?"):
         log("Exploit cancelled by user", "WARN")
@@ -219,7 +367,7 @@ def execute_exploit() -> bool:
     last_log_time = start_time
     last_log_size = 0
 
-    cmd = f"{HELPER_LIB} --run-payload {EXPLOIT_FILE} {HELPER_LIB} {EXPLOIT_LOG}"
+    cmd = f"{helper} --run-payload {EXPLOIT_FILE} {helper} {EXPLOIT_LOG}"
     proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
     while proc.poll() is None:
@@ -291,10 +439,11 @@ def await_daemon_socket(timeout_sec: int = 15):
 
 def run_helper(cmd: str, retries: int = 5, timeout_sec: int = 90) -> Optional[str]:
     """Run command via helper binary with retries and timeout."""
+    global HELPER_BINARY
     for attempt in range(1, retries + 1):
         try:
             result = subprocess.run(
-                f"{HELPER_LIB} -c '{cmd}'",
+                f"{HELPER_BINARY} -c '{cmd}'",
                 shell=True,
                 capture_output=True,
                 text=True,
@@ -524,8 +673,8 @@ def main():
     # Detect device
     device_info = detect_device()
 
-    # Load profiles
-    profiles = load_profiles(PROFILES_JSON)
+    # Load profiles (from APK, GitHub, or fallback)
+    profiles = load_profiles()
 
     # Find matching profile
     profile = find_profile(device_info, profiles)
