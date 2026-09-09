@@ -47,14 +47,16 @@ detect_device() {
 }
 
 find_profile() {
-    echo "$PROFILES" | while IFS='|' read -r dev kern_base profile_build actual_build kmi; do
+    while IFS='|' read -r dev kern_base profile_build actual_build kmi; do
         [ -z "$dev" ] && continue
         if [ "$dev" = "$1" ] && [ "$2" = "$kern_base" ] && [ "$3" = "$actual_build" ]; then
             log "INFO" "✓ Found profile: $dev-$profile_build (KMI: $kmi)"
             echo "$dev|$profile_build|$kmi"
-            return
+            return 0
         fi
-    done
+    done <<EOF
+$PROFILES
+EOF
 }
 
 get_helper_binary() {
@@ -151,7 +153,9 @@ main() {
     local profile=$(find_profile "$DEVICE" "$KERNEL" "$BUILD")
     [ -z "$profile" ] && { log "ERROR" "Device not supported"; exit 1; }
 
-    echo "$profile" | IFS='|' read -r dev profile_build kmi
+    dev=$(echo "$profile" | cut -d'|' -f1)
+    profile_build=$(echo "$profile" | cut -d'|' -f2)
+    kmi=$(echo "$profile" | cut -d'|' -f3)
     log "INFO" "DEVICE: $DEVICE ($MODEL) | BUILD: $BUILD | KMI: $kmi"
     
     prompt "Continue?" || exit 0
