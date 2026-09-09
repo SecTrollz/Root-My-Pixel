@@ -1,6 +1,6 @@
 #!/system/bin/sh
-# Root My Pixel — Complete Hardcoded Script
-# All payloads embedded — run via: rish sh root-final.sh
+# Root My Pixel — Foolproof Hardcoded KernelSU Setup
+# Auto-invokes via Shizuku if needed • All payloads embedded • Zero manual setup
 
 TEMP_DIR="/data/local/tmp"
 EXPLOIT_FILE="$TEMP_DIR/cve-2026-43499-app.so"
@@ -183,4 +183,26 @@ main() {
     log "INFO" "Verify: su -c 'id'  (should return uid=0)"
 }
 
+auto_invoke_with_rish() {
+    local uid=$(id -u 2>/dev/null)
+    if [ "$uid" != "2000" ]; then
+        local script_abs="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")" || return 1
+        if command -v rish >/dev/null 2>&1; then
+            log "INFO" "Escalating to Shizuku context via rish..."
+            exec rish sh "$script_abs" "$@"
+        else
+            log "ERROR" "═══════════════════════════════════════════════════════"
+            log "ERROR" "✗ NOT running in Shizuku (UID: $uid, need: 2000)"
+            log "ERROR" "✗ rish binary not found in PATH"
+            log "ERROR" "═══════════════════════════════════════════════════════"
+            log "ERROR" "FIXES:"
+            log "ERROR" "1. Install Shizuku app"
+            log "ERROR" "2. Run: rish sh '$script_abs'"
+            log "ERROR" "═══════════════════════════════════════════════════════"
+            exit 1
+        fi
+    fi
+}
+
+auto_invoke_with_rish "$@"
 main "$@"
