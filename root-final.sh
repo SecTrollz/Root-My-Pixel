@@ -30,11 +30,43 @@ prompt() {
 mkdir_p() { mkdir -p "$1"; }
 
 extract_payload() {
-    log "INFO" "Extracting $3..."
-    mkdir -p "$(dirname "$2")"
-    echo "$1" | base64 -d > "$2" 2>/dev/null || { log "ERROR" "Failed to extract $3"; return 1; }
-    [ -f "$2" ] && [ -s "$2" ] && { chmod 755 "$2"; log "INFO" "✓ Extracted: $3"; return 0; }
-    return 1
+    local b64_data="$1" dst="$2" name="$3"
+    log "INFO" "Extracting $name..."
+
+    # Create directory
+    local dir=$(dirname "$dst")
+    mkdir -p "$dir" || { log "ERROR" "Cannot create $dir"; return 1; }
+
+    # Check available space
+    local avail=$(df "$dir" | tail -1 | awk '{print $4}')
+    local needed=$((${#b64_data} / 2))  # Rough estimate
+    if [ "$avail" -lt "$needed" ]; then
+        log "WARN" "Low disk space: ${avail}KB available, ~${needed}KB needed"
+    fi
+
+    # Try base64 decode with error output
+    echo "$b64_data" | base64 -d > "$dst" 2>/tmp/b64_err.txt || {
+        local err=$(cat /tmp/b64_err.txt 2>/dev/null || echo "unknown error")
+        log "ERROR" "base64 decode failed for $name: $err"
+        return 1
+    }
+
+    # Verify file was created and has content
+    if [ ! -f "$dst" ]; then
+        log "ERROR" "File not created: $dst"
+        return 1
+    fi
+
+    local size=$(stat -c%s "$dst" 2>/dev/null || echo 0)
+    if [ "$size" -eq 0 ]; then
+        log "ERROR" "Extracted file is empty: $dst"
+        return 1
+    fi
+
+    # Make executable
+    chmod 755 "$dst" || { log "WARN" "Cannot chmod $dst"; }
+    log "INFO" "✓ Extracted: $name ($size bytes)"
+    return 0
 }
 
 detect_device() {
