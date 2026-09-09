@@ -1,0 +1,161 @@
+#!/bin/bash
+# Root My Pixel — CLI Suite
+# Mobile-friendly orchestration script for on-device rooting
+# Usage: ./rmp-cli [command]
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$SCRIPT_DIR/lib"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/rmp"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/rmp"
+
+# Colors (for terminal)
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Ensure lib scripts exist
+source "$LIB_DIR/common.sh" 2>/dev/null || {
+    echo "ERROR: lib/common.sh not found"
+    exit 1
+}
+
+# Commands
+cmd_detect() {
+    source "$LIB_DIR/detect.sh"
+    detect_device
+}
+
+cmd_download() {
+    source "$LIB_DIR/payload.sh"
+    get_all_payloads
+}
+
+cmd_exploit() {
+    source "$LIB_DIR/exploit.sh"
+    run_exploit
+}
+
+cmd_install() {
+    source "$LIB_DIR/kernelsu.sh"
+    install_kernelsu
+}
+
+cmd_full() {
+    echo -e "${BLUE}=== Root My Pixel CLI Suite ===${NC}\n"
+
+    # Full workflow
+    cmd_detect || exit 1
+    prompt "Continue?" || exit 0
+
+    cmd_download || exit 1
+    cmd_exploit || exit 1
+    cmd_install || exit 1
+
+    echo -e "\n${GREEN}SUCCESS — Rooted with KernelSU${NC}"
+}
+
+cmd_menu() {
+    while true; do
+        echo ""
+        echo -e "${BLUE}Root My Pixel${NC}"
+        echo "1. Detect device"
+        echo "2. Download payloads"
+        echo "3. Run exploit"
+        echo "4. Install KernelSU"
+        echo "5. Full workflow"
+        echo "6. Exit"
+        echo ""
+        read -p "Choose: " choice
+
+        case "$choice" in
+            1) cmd_detect ;;
+            2) cmd_download ;;
+            3) cmd_exploit ;;
+            4) cmd_install ;;
+            5) cmd_full ;;
+            6) exit 0 ;;
+            *) echo "Invalid choice" ;;
+        esac
+    done
+}
+
+cmd_help() {
+    cat <<EOF
+Root My Pixel CLI Suite
+
+Usage: rmp-cli [command]
+
+Commands:
+  detect      Detect device (codename, build, kernel)
+  download    Download/extract payloads
+  exploit     Run CVE-2026-43499 exploit
+  install     Install KernelSU
+  full        Complete workflow (all steps)
+  menu        Interactive menu
+  status      Show device/setup status
+  clean       Remove cached files
+  help        Show this help
+
+Environment:
+  RMP_DEVICE  Force device (skip detection)
+  RMP_TEMP    Temp directory (default: /data/local/tmp)
+  RMP_QUIET   Suppress output (0/1)
+
+Examples:
+  rmp-cli detect
+  rmp-cli full
+  rmp-cli menu
+EOF
+}
+
+cmd_status() {
+    source "$LIB_DIR/detect.sh"
+
+    echo "Device Status:"
+    if detect_device 2>/dev/null; then
+        echo "  Device: $DEVICE"
+        echo "  Build: $BUILD"
+        echo "  Target: $TARGET"
+        echo "  KMI: $KMI"
+    else
+        echo "  Not detected"
+    fi
+
+    echo ""
+    echo "Setup Status:"
+    [ -f "$CACHE_DIR/exploit.so" ] && echo "  ✓ Exploit payload" || echo "  ✗ Exploit payload"
+    [ -f "$CACHE_DIR/ksud" ] && echo "  ✓ ksud binary" || echo "  ✗ ksud binary"
+    [ -f "$CACHE_DIR/helper.so" ] && echo "  ✓ Helper binary" || echo "  ✗ Helper binary"
+}
+
+cmd_clean() {
+    read -p "Remove cached payloads? (y/n): " ans
+    [ "$ans" = "y" ] && {
+        rm -rf "$CACHE_DIR"
+        echo "Cleaned"
+    }
+}
+
+# Main
+main() {
+    mkdir -p "$CONFIG_DIR" "$CACHE_DIR"
+
+    case "${1:-menu}" in
+        detect)   cmd_detect ;;
+        download) cmd_download ;;
+        exploit)  cmd_exploit ;;
+        install)  cmd_install ;;
+        full)     cmd_full ;;
+        menu)     cmd_menu ;;
+        status)   cmd_status ;;
+        clean)    cmd_clean ;;
+        help)     cmd_help ;;
+        *)        cmd_help; exit 1 ;;
+    esac
+}
+
+main "$@"
