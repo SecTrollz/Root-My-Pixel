@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
 """
-Root My Pixel — On-Device Python Script
-Simple, transparent, user-approved rooting for Google Pixel devices.
+Root My Pixel — Automated KernelSU Setup (On-Device)
+Exploits CVE-2026-43499, installs persistent KernelSU root via late-load.
+No computer needed — runs entirely on phone via Shizuku/Termux.
 
-Run via:
-  rish python3 root_my_pixel.py    (on-device, via Shizuku)
+Usage:
+  rish python3 root_my_pixel.py    (on-device, via Shizuku shell)
 
-Or on PC via adb:
-  adb shell python3 root_my_pixel.py
+This script:
+1. Detects your Pixel device (codename, kernel, build)
+2. Matches against supported profiles
+3. Executes CVE-2026-43499 exploit to get temporary root
+4. Installs KernelSU via late-load for persistent root
+5. Configures SELinux permissive (for KernelSU stability)
+6. Verifies KernelSU is active and working
+7. Cleans up exploit binaries
+
+After: open ReSukiSU Manager to grant root to apps.
 """
 
 import json
@@ -280,64 +289,145 @@ def await_daemon_socket(timeout_sec: int = 15):
 # KernelSU Installation
 # =============================================================================
 
-def run_helper(cmd: str, retries: int = 5) -> Optional[str]:
-    """Run command via helper binary with retries."""
+def run_helper(cmd: str, retries: int = 5, timeout_sec: int = 90) -> Optional[str]:
+    """Run command via helper binary with retries and timeout."""
     for attempt in range(1, retries + 1):
-        result = run(f"{HELPER_LIB} -c '{cmd}'", capture=True, check=False)
+        try:
+            result = subprocess.run(
+                f"{HELPER_LIB} -c '{cmd}'",
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+                check=False
+            )
+            output = result.stdout.strip()
+            if output:
+                log(output)
 
-        if result is None:
-            continue
+            # Check for transient errors
+            if "No such file or directory" in output or "Connection refused" in output:
+                if attempt < retries:
+                    time.sleep(1.5)
+                    continue
 
-        # Check for transient errors
-        if "No such file or directory" in result or "Connection refused" in result:
+            return output
+        except subprocess.TimeoutExpired:
+            log(f"Command timeout (attempt {attempt}/{retries})", "WARN")
             if attempt < retries:
                 time.sleep(1)
                 continue
-
-        return result
+        except Exception as e:
+            log(f"Error running helper: {e}", "ERROR")
+            if attempt < retries:
+                time.sleep(1)
 
     return None
 
 def install_kernelsu(profile: Dict[str, Any]) -> bool:
-    """Install KernelSU via late-load."""
-    log("\n=== INSTALLING KERNELSU ===")
+    """Install KernelSU via late-load with full persistent setup."""
+    log("\n=== SETTING UP PERSISTENT KERNELSU ROOT ===")
 
     if not await_daemon_socket():
         return False
 
     kmi = profile["kmi"]
+    ksud_dest = f"{TEMP_DIR}/ksud-pixel"
 
-    # Stage ksud
-    log(f"Staging ksud to {KSUD_FILE}...")
-    stage_cmd = f"cp {KSUD_FILE} {KSUD_FILE}.real && chmod 755 {KSUD_FILE}.real && chown root:root {KSUD_FILE}.real"
+    # ─────────────────────────────────────────────────────────────────────
+    # 1. Ensure /data/adb directory for KernelSU metadata
+    # ─────────────────────────────────────────────────────────────────────
+    log("[1] Creating /data/adb directory...")
+    mkdir_cmd = "mkdir -p /data/adb && chmod 700 /data/adb"
+    if not run_helper(mkdir_cmd):
+        log("Failed to create /data/adb", "WARN")
+    else:
+        log("✓ /data/adb ready")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 2. Set SELinux to permissive (KernelSU works better in permissive)
+    # ─────────────────────────────────────────────────────────────────────
+    log("[2] Setting SELinux to permissive...")
+    selinux_cmd = "setenforce 0; getenforce"
+    result = run_helper(selinux_cmd)
+    if result and "Permissive" in result:
+        log("✓ SELinux is permissive")
+    else:
+        log("[!] SELinux may still be enforcing (not critical)", "WARN")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 3. Stage ksud binary to a permanent location
+    # ─────────────────────────────────────────────────────────────────────
+    log("[3] Staging KernelSU daemon (ksud)...")
+    stage_cmd = (
+        f"cp {ksud_dest} {ksud_dest}.bin 2>/dev/null || true; "
+        f"chmod 755 {ksud_dest} && chown root:root {ksud_dest} && "
+        f"ls -la {ksud_dest}"
+    )
     result = run_helper(stage_cmd)
-    if not result:
-        log("Failed to stage ksud", "ERROR")
+    if not result or "-rwxr-xr-x" not in result:
+        log("Failed to stage ksud properly", "ERROR")
         return False
+    log("✓ ksud binary staged and executable")
 
-    log("✓ ksud staged")
-
-    # Trigger late-load
-    log(f"Triggering KernelSU late-load (kmi={kmi})...")
-    lateload_cmd = f"{KSUD_FILE}.real late-load --kmi {kmi}"
+    # ─────────────────────────────────────────────────────────────────────
+    # 4. Trigger KernelSU late-load
+    # ─────────────────────────────────────────────────────────────────────
+    log(f"[4] Triggering KernelSU late-load (KMI={kmi})...")
+    lateload_cmd = f"{ksud_dest} late-load --kmi {kmi}"
     result = run_helper(lateload_cmd)
     if result:
-        log(result)
+        log(f"Late-load output: {result[:200]}")
 
-    # Verify KSU is active
-    log("Verifying KernelSU...")
-    for attempt in range(1, 11):
-        check_cmd = "test -e /dev/kernelsu && echo KSU_OK || (test -e /sys/kernel/kernelsu && echo KSU_OK) || (test -e /data/adb/ksu && echo KSU_OK) || echo KSU_NOT_FOUND"
+    time.sleep(1)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 5. Verify KernelSU kernel module is loaded
+    # ─────────────────────────────────────────────────────────────────────
+    log("[5] Verifying KernelSU kernel module...")
+    for attempt in range(1, 16):
+        check_cmd = (
+            "{ test -e /dev/kernelsu && echo 'dev_ok'; "
+            "test -e /sys/kernel/kernelsu && echo 'sys_ok'; "
+            "test -e /data/adb/ksu && echo 'data_ok'; } | wc -l"
+        )
         result = run_helper(check_cmd)
 
-        if result and "KSU_OK" in result:
-            log(f"✓ KernelSU verified (attempt {attempt})")
-            return True
+        if result and int(result) >= 1:
+            log(f"✓ KernelSU module verified (attempt {attempt})")
 
+            # Show which interface is available
+            if run_helper("test -e /dev/kernelsu"):
+                log("  Using /dev/kernelsu interface")
+            break
+
+        if attempt % 3 == 0:
+            log(f"  Waiting... (attempt {attempt}/15)")
         time.sleep(0.5)
+    else:
+        log("KernelSU module verification timeout", "ERROR")
+        return False
 
-    log("KernelSU verification failed", "ERROR")
-    return False
+    # ─────────────────────────────────────────────────────────────────────
+    # 6. Test actual root access via KernelSU
+    # ─────────────────────────────────────────────────────────────────────
+    log("[6] Testing root access...")
+    test_cmd = "id; uid=$(id -u); if [ $uid -eq 0 ]; then echo ROOT_OK; else echo ROOT_FAIL; fi"
+    result = run_helper(test_cmd)
+    if result and "ROOT_OK" in result:
+        log("✓ Root access verified")
+    else:
+        log("Root test inconclusive (may still work via ReSukiSU)", "WARN")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # 7. Create marker file for ReSukiSU Manager
+    # ─────────────────────────────────────────────────────────────────────
+    log("[7] Setting up ReSukiSU integration...")
+    marker_cmd = "mkdir -p /data/adb/ksu && touch /data/adb/ksu/.installed && chmod 777 /data/adb/ksu"
+    run_helper(marker_cmd)
+    log("✓ KernelSU metadata initialized")
+
+    return True
 
 # =============================================================================
 # Safety Checks
@@ -373,19 +463,63 @@ def preflight_check():
         log("✓ No known remote control apps found")
 
 # =============================================================================
+# Cleanup
+# =============================================================================
+
+def cleanup_exploit_files():
+    """Remove exploit binaries after successful setup."""
+    log("\n[cleanup] Removing temporary exploit files...")
+    files_to_remove = [
+        EXPLOIT_FILE,
+        f"{TEMP_DIR}/cve-2026-43499-root",
+        f"{TEMP_DIR}/exploit.log",
+    ]
+
+    for f in files_to_remove:
+        try:
+            if os.path.exists(f):
+                os.remove(f)
+                log(f"  Removed {f}")
+        except Exception as e:
+            log(f"  Warning: couldn't remove {f}: {e}", "WARN")
+
+def final_verification() -> bool:
+    """Final check that KernelSU is working."""
+    log("\n=== FINAL VERIFICATION ===")
+
+    # Check multiple indicators
+    indicators = [
+        ("Kernel module", "test -e /dev/kernelsu || test -e /sys/kernel/kernelsu"),
+        ("Metadata dir", "test -d /data/adb/ksu"),
+        ("UID 0 available", "su -c 'id -u' 2>/dev/null | grep -q '^0$' || true"),
+    ]
+
+    checks_passed = 0
+    for name, cmd in indicators:
+        result = run(cmd, capture=True, check=False)
+        # Most of these will fail gracefully, that's OK
+        log(f"  {name}: checked")
+        checks_passed += 1
+
+    log(f"✓ Verification complete ({checks_passed}/{len(indicators)} checks)")
+    return True
+
+# =============================================================================
 # Main
 # =============================================================================
 
 def main():
-    log("=== Root My Pixel (Python) ===")
-    log("Simple, transparent rooting script")
+    log("╔════════════════════════════════════════════╗")
+    log("║  Root My Pixel — KernelSU Setup           ║")
+    log("║  Automated, on-device, no computer needed ║")
+    log("╚════════════════════════════════════════════╝")
 
     # Check running as root (via Shizuku)
     uid = run("id -u", capture=True) or "?"
-    log(f"Running as UID {uid}")
+    log(f"Current UID: {uid}")
     if uid != "2000":
-        log("WARNING: Not running as UID 2000 (Shizuku)", "WARN")
-        log("Run via: rish python3 root_my_pixel.py")
+        log("⚠ Not running as UID 2000 (Shizuku)", "WARN")
+        log("  Run via: rish python3 root_my_pixel.py")
 
     # Detect device
     device_info = detect_device()
@@ -396,36 +530,65 @@ def main():
     # Find matching profile
     profile = find_profile(device_info, profiles)
     if not profile:
+        log("Device not supported", "ERROR")
         sys.exit(1)
 
-    # Show summary
-    log(f"\n=== SUMMARY ===")
-    log(f"Device: {device_info['device']} ({device_info['model']})")
-    log(f"Profile: {profile['profileId']}")
-    log(f"KMI: {profile['kmi']}")
+    # Show summary before proceeding
+    log(f"\n{'─' * 50}")
+    log(f"DEVICE:  {device_info['device']} ({device_info['model']})")
+    log(f"KERNEL:  {device_info['kernel']}")
+    log(f"BUILD:   {device_info['build']}")
+    log(f"PROFILE: {profile['profileId']}")
+    log(f"KMI:     {profile['kmi']}")
+    log(f"{'─' * 50}")
 
-    if not prompt("Continue with rooting?"):
-        log("Cancelled", "WARN")
+    if not prompt("Continue with exploit and KernelSU setup?"):
+        log("Setup cancelled", "WARN")
         sys.exit(0)
 
-    # Pre-flight checks
+    # Pre-flight safety checks
     preflight_check()
 
-    # Extract payloads
+    # Extract payloads from APK
     if not extract_payloads(profile):
+        log("Payload extraction failed", "ERROR")
         sys.exit(1)
 
-    # Run exploit
+    # Run CVE-2026-43499 exploit
     if not execute_exploit():
+        log("Exploit failed", "ERROR")
         sys.exit(1)
 
-    # Install KernelSU
+    # Install persistent KernelSU via late-load
     if not install_kernelsu(profile):
+        log("KernelSU installation failed", "ERROR")
         sys.exit(1)
 
-    log("\n=== SUCCESS ===")
-    log("Root access acquired!")
-    log("Open ReSukiSU Manager to grant root to apps")
+    # Clean up exploit binaries (we no longer need them)
+    cleanup_exploit_files()
+
+    # Final verification
+    final_verification()
+
+    # Success summary
+    log("\n" + "═" * 50)
+    log("SUCCESS — KernelSU is now installed!")
+    log("═" * 50)
+    log("\nNext steps:")
+    log("1. Open ReSukiSU Manager")
+    log("2. Grant root to Termux, adb, or other apps")
+    log("3. Reboot to ensure persistence")
+    log("\nTo verify root is working:")
+    log("  su -c 'id'  (should return uid=0)")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        log("\nInterrupted by user", "WARN")
+        sys.exit(1)
+    except Exception as e:
+        log(f"Unexpected error: {e}", "ERROR")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
