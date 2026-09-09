@@ -29,11 +29,28 @@ detect_device() {
     DEVICE=$(getprop ro.product.device 2>/dev/null || echo "")
     BUILD=$(getprop ro.build.display.id 2>/dev/null || echo "")
     MODEL=$(getprop ro.product.model 2>/dev/null || echo "")
-    KERNEL=$(cat /proc/version 2>/dev/null | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1)
+    
+    # Try multiple kernel detection methods
+    KERNEL=""
+    
+    # Method 1: grep /proc/version for version numbers
+    if [ -z "$KERNEL" ] && [ -f /proc/version ]; then
+        KERNEL=$(cat /proc/version 2>/dev/null | grep -o '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*' | head -1)
+    fi
+    
+    # Method 2: uname -r
+    if [ -z "$KERNEL" ]; then
+        KERNEL=$(uname -r 2>/dev/null | cut -d'-' -f1)
+    fi
+    
+    # Method 3: Try different grep pattern
+    if [ -z "$KERNEL" ] && [ -f /proc/version ]; then
+        KERNEL=$(cat /proc/version 2>/dev/null | awk '{print $3}' | cut -d'-' -f1)
+    fi
     
     [ -z "$DEVICE" ] && fatal "Cannot detect device"
     [ -z "$BUILD" ] && fatal "Cannot detect build"
-    [ -z "$KERNEL" ] && fatal "Cannot detect kernel"
+    [ -z "$KERNEL" ] && fatal "Cannot detect kernel (tried /proc/version, uname -r)"
     
     info "Device: $DEVICE ($MODEL)"
     info "Build: $BUILD"
