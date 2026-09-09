@@ -19,8 +19,13 @@ mustang|6.6.118|CP2A.260705.006|CP2A.260705.006|android15-6.6
 lynx|6.1.157|CP2A.260705.006|CP2A.260705.006|android14-6.1
 '
 
-log() { echo "[$(date '+%H:%M:%S')] [$1] ${@:2}"; }
-prompt() { local ans; while true; do printf ">>> $1 [y/n]: "; read -r ans; case "$ans" in y|yes) return 0 ;; n|no) return 1 ;; esac; done; }
+log() {
+    local ts=$(date '+%H:%M:%S') level=$1; shift
+    echo "[$ts] [$level] $@"
+}
+prompt() {
+    while true; do printf ">>> $1 [y/n]: "; read -r ans; case "$ans" in y|yes) return 0 ;; n|no) return 1 ;; esac; done
+}
 mkdir_p() { mkdir -p "$1"; }
 
 extract_payload() {
